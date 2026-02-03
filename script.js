@@ -416,12 +416,19 @@ function renderGame() {
     const card = document.createElement('div');
     card.className = 'participant';
 
+    const nameField = gameMode === 'team'
+      ? `
+        <label>Team Name</label>
+        <input value="${p.teamName || ''}" onchange="participants[${i}].teamName=this.value" placeholder="Required for 5v5">
+      `
+      : `
+        <label>Name</label>
+        <input value="${p.name}" onchange="participants[${i}].name=this.value">
+      `;
+
     card.innerHTML = `
       <h3>Participant ${i + 1}</h3>
-      <label>Name</label>
-      <input value="${p.name}" onchange="participants[${i}].name=this.value">
-      <label>Team Name</label>
-      <input value="${p.teamName || ''}" onchange="participants[${i}].teamName=this.value" placeholder="Required for 5v5">
+      ${nameField}
       <label>Position</label>
       <select onchange="participants[${i}].position=this.value">
         <option ${p.position === 'PG' ? 'selected' : ''}>PG</option>
