@@ -717,6 +717,11 @@ heightBonus = (Height - 78) / 12</pre>
       </p>
       <pre class="sim-output" style="margin-top:6px; white-space:pre-wrap;">score = PTS*0.55 + REB*0.30 + AST*0.25 + PER*0.15
 careerAvgScore = sum(score * games) / totalGames</pre>
+      <h3>PER</h3>
+      <p class="muted">
+        PER (Player Efficiency Rating) is a single-number summary of a player’s overall per-minute impact.
+        Higher PER generally means a stronger all-around statistical season.
+      </p>
       <h3>Hall of Fame</h3>
       <p class="muted">
         HOF is awarded only with elite, sustained output. The sim checks MVPs, All-Pro counts,
@@ -975,7 +980,7 @@ function renderResults(output) {
   const avgStl = output.seasons.reduce((a, s) => a + s.custom.stl * s.custom.games, 0) / totalGames;
   const avgBlk = output.seasons.reduce((a, s) => a + s.custom.blk * s.custom.games, 0) / totalGames;
   const avgPer = output.seasons.reduce((a, s) => a + s.custom.per * s.custom.games, 0) / totalGames;
-  text += `Career Length: ${output.totalYears} seasons, ${output.totalGames} games\n`;
+  text += `Career Length: ${output.totalYears} seasons (${output.totalGames} games)\n`;
   text += `Career Averages (Years ${output.totalYears}): PTS ${avgPts.toFixed(1)} | AST ${avgAst.toFixed(1)} | REB ${avgReb.toFixed(1)} | STL ${avgStl.toFixed(1)} | BLK ${avgBlk.toFixed(1)} | PER ${avgPer.toFixed(1)}\n\n`;
 
   output.seasons.forEach(s => {
