@@ -8,6 +8,8 @@ An in-browser NBA draft and career simulator built with HTML, CSS, JavaScript, a
 - SQL-first: data is loaded into an in-memory SQLite database and queried locally
 - Era filtering and position-aware comparisons for more realistic selection
 - Color-coded stat tables to compare players at a glance
+- Tournament mode for 3+ participants with random byes
+- Play-by-play game story output (light/medium/full detail)
 
 ## Tech Stack
 - HTML5
@@ -40,6 +42,11 @@ Team wins are derived from team aggregate performance.
 Hall of Fame requires elite sustained output and awards.
 
 This keeps results within plausible historical ranges while still producing variety.
+
+## Draft Game Simulation
+- Attribute mode builds a custom player from selected career averages and applies position-based adjustments.
+- 5v5 mode evaluates full rosters and weights position-specific strengths (e.g., PG passing, C rebounding).
+- Matches generate a narrative game story, and tournaments are run automatically for 3+ participants.
 
 ## Stat Color Coding
 In selection tables, stats are color-coded by position-relative performance:
