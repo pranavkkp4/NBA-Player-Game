@@ -313,15 +313,18 @@ function clamp01(x) {
   return Math.max(0, Math.min(1, x));
 }
 
-function positionMultipliers(pos) {
+function positionAdjustments(pos) {
   const p = String(pos || "").toLowerCase();
-  if (p.includes("guard")) {
-    return { pts: 1.02, ast: 1.15, reb: 0.85, stl: 1.1, blk: 0.8 };
+  if (p.includes("point")) {
+    return { pts: 0, ast: 0.7, reb: -0.5, stl: 0, blk: 0 };
+  }
+  if (p.includes("shooting")) {
+    return { pts: 1.5, ast: 0, reb: -0.5, stl: 0, blk: 0 };
   }
   if (p.includes("center")) {
-    return { pts: 0.98, ast: 0.8, reb: 1.2, stl: 0.8, blk: 1.25 };
+    return { pts: -1.5, ast: -1.0, reb: 3.0, stl: 0, blk: 0 };
   }
-  return { pts: 1.0, ast: 0.95, reb: 1.05, stl: 0.95, blk: 1.0 };
+  return { pts: 0, ast: 0, reb: 0, stl: 0, blk: 0 };
 }
 
 function careerFactorByYear(yearIndex, longevityG, totalYears) {
@@ -792,17 +795,17 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
   const customTeam = teamOverride && teams.includes(teamOverride)
     ? teamOverride
     : teams[Math.floor(Math.random() * teams.length)];
-  const posMult = positionMultipliers(customPosition);
+  const posAdj = positionAdjustments(customPosition);
   const custom = {
     name: customName,
     team: customTeam,
     isCustom: true,
     base: {
-      pts: peak.pts * posMult.pts,
-      ast: peak.ast * posMult.ast,
-      reb: peak.reb * posMult.reb,
-      stl: peak.stl * posMult.stl,
-      blk: peak.blk * posMult.blk,
+      pts: peak.pts + posAdj.pts,
+      ast: peak.ast + posAdj.ast,
+      reb: peak.reb + posAdj.reb,
+      stl: peak.stl + posAdj.stl,
+      blk: peak.blk + posAdj.blk,
       g: peak.g,
       ath: peak.ath,
       height: peak.height
