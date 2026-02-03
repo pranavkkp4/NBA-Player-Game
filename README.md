@@ -1,6 +1,6 @@
 # NBA Player Game
 
-An in-browser NBA player draft and career simulation game built with HTML, CSS, JavaScript, and SQLite (via sql.js). It runs fully on GitHub Pages without a backend.
+An in-browser NBA draft and 10-year career simulator built with HTML, CSS, JavaScript, and in-browser SQLite (sql.js), featuring a rule-based simulation model and running fully on GitHub Pages.
 
 ## Highlights
 - Draft game: build a player by attributes or draft a full 5v5 team
@@ -46,7 +46,7 @@ An in-browser NBA player draft and career simulation game built with HTML, CSS, 
 ## GitHub Pages Notes
 This project is designed for static hosting. Large raw data files are intentionally excluded from git due to GitHub’s 100MB file limit. The app only needs the CSV in `data/NBA_PLAYERS.csv` and (optionally) `data/nba_players.json` to run.
 
-## Recruiter-Friendly Summary
+## Summary
 This project demonstrates:
 - Building a data-driven web app without a backend
 - Client-side SQL with SQLite via `sql.js`
@@ -56,4 +56,3 @@ This project demonstrates:
 
 ## Local Run
 Open `index.html` in a browser. For the best experience, serve via a static server (e.g., VS Code Live Server) so fetch requests work properly.
-

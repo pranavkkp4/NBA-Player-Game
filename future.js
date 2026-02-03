@@ -10,6 +10,7 @@ let players = [];
 let playersLoaded = false;
 let eraFilter = "all";
 let teamsByEra = {};
+let statSummary = {};
 
 const ATTRIBUTES = [
   "shooting",
@@ -86,7 +87,9 @@ function fmt(value, digits = 1) {
 function inEra(player) {
   if (eraFilter === "all") return true;
   const start = parseInt(eraFilter.slice(0, 4));
-  return player.Debut >= start && player.Debut < start + 10;
+  const debut = Number(player.Debut);
+  if (!Number.isFinite(debut)) return false;
+  return debut >= start && debut < start + 10;
 }
 
 function randn() {
@@ -202,6 +205,41 @@ function buildDatabaseFromCSV(csvText) {
   stmt.free();
 }
 
+function computeMeanStd(values) {
+  if (!values.length) return { mean: 0, std: 1 };
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const variance = values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length;
+  const std = Math.sqrt(variance) || 1;
+  return { mean, std };
+}
+
+function buildStatSummary() {
+  const cols = ["PTS", "AST", "TRB", "PER", "G", "Height", "FG%", "STL", "BLK"];
+  const summary = {};
+  cols.forEach(col => {
+    if (!hasCol(col)) return;
+    const vals = players.map(p => Number(p[col])).filter(v => Number.isFinite(v));
+    summary[col] = computeMeanStd(vals);
+  });
+  const athVals = players.map(p => computeAthleticism({
+    per: p.PER,
+    fg: p["FG%"],
+    reb: p.TRB,
+    g: p.G,
+    height: p.Height
+  })).filter(v => Number.isFinite(v));
+  summary.ATH = computeMeanStd(athVals);
+  statSummary = summary;
+}
+
+function zScore(value, statKey) {
+  const entry = statSummary[statKey];
+  if (!entry) return 0;
+  const val = Number(value);
+  if (!Number.isFinite(val)) return 0;
+  return (val - entry.mean) / entry.std;
+}
+
 /* =========================
    INIT: Database + Teams
    ========================= */
@@ -300,6 +338,7 @@ async function initDatabase() {
     res[0].columns.forEach((c, i) => obj[c] = row[i]);
     return obj;
   });
+  buildStatSummary();
 
   // Try load real franchises mapping (optional)
   try {
@@ -438,31 +477,57 @@ function openFutureModal(attrKey) {
 
   const table = document.createElement("table");
   table.className = "pick-table";
-  table.innerHTML = `
-    <thead>
-      <tr>
-        <th>Name</th><th>Pos</th><th>PTS</th><th>AST</th>
-        <th>TRB</th><th>PER</th><th>FG%</th><th>G</th><th>Hgt</th>
-      </tr>
-    </thead>
-    <tbody></tbody>
-  `;
+  if (attrKey === "athleticism") {
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Name</th><th>Pos</th><th>ATH</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+  } else {
+    table.innerHTML = `
+      <thead>
+        <tr>
+          <th>Name</th><th>Pos</th><th>PTS</th><th>AST</th>
+          <th>TRB</th><th>PER</th><th>FG%</th><th>G</th><th>Hgt</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+  }
 
   const tb = table.querySelector("tbody");
 
   pool.forEach(p => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${p.Name}</td>
-      <td>${p.Position}</td>
-      <td>${fmt(p.PTS, 1)}</td>
-      <td>${fmt(p.AST, 1)}</td>
-      <td>${fmt(p.TRB, 1)}</td>
-      <td>${fmt(p.PER, 1)}</td>
-      <td>${fmt(p["FG%"], 1)}</td>
-      <td>${fmt(p.G, 0)}</td>
-      <td>${fmt(p.Height, 0)}</td>
-    `;
+    if (attrKey === "athleticism") {
+      const ath = computeAthleticism({
+        per: p.PER,
+        fg: p["FG%"],
+        reb: p.TRB,
+        g: p.G,
+        height: p.Height
+      });
+      tr.innerHTML = `
+        <td>${p.Name}</td>
+        <td>${p.Position}</td>
+        <td>${fmt(ath, 2)}</td>
+      `;
+    } else {
+      tr.innerHTML = `
+        <td>${p.Name}</td>
+        <td>${p.Position}</td>
+        <td>${fmt(p.PTS, 1)}</td>
+        <td>${fmt(p.AST, 1)}</td>
+        <td>${fmt(p.TRB, 1)}</td>
+        <td>${fmt(p.PER, 1)}</td>
+        <td>${fmt(p["FG%"], 1)}</td>
+        <td>${fmt(p.G, 0)}</td>
+        <td>${fmt(p.Height, 0)}</td>
+      `;
+    }
 
     tr.onclick = () => {
       let value;
@@ -481,7 +546,11 @@ function openFutureModal(attrKey) {
       customPeak[attrKey] = { value, source: p.Name };
 
       const input = document.getElementById(`future-${attrKey}-value`);
-      input.value = `${p.Name} (${value.toFixed(2)})`;
+      if (attrKey === "athleticism") {
+        input.value = `${value.toFixed(2)}`;
+      } else {
+        input.value = `${p.Name} (${value.toFixed(2)})`;
+      }
 
       modal.classList.add("hidden");
     };
@@ -563,8 +632,22 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
   // rookies need improvement baseline
   let lastYearScore = null;
 
+  const talentZ = [
+    zScore(peak.fg, "FG%"),
+    zScore(peak.ast, "AST"),
+    zScore(peak.reb, "TRB"),
+    zScore(peak.stl, "STL"),
+    zScore(peak.blk, "BLK"),
+    zScore(peak.g, "G"),
+    zScore(peak.height, "Height"),
+    zScore(peak.ath, "ATH")
+  ].reduce((a, b) => a + b, 0) / 8;
+
   for (let year = 1; year <= 10; year++) {
-    const factor = 0.5 + ((year - 1) / 9) * 0.5; // 50% -> 100%
+    const progress = 0.5 + ((year - 1) / 9) * 0.5; // 50% -> 100%
+    const talentFactor = clamp(0.85 + talentZ * 0.07, 0.6, 1.15);
+    const yearVariance = clamp(0.9 + randn() * 0.08, 0.75, 1.2);
+    const factor = progress * talentFactor * yearVariance;
 
     // simulate custom seasonal stats from selected peaks
     const pts = clamp((custom.base.fg * 40 + custom.base.ath * 18 + randn() * 1.2) * factor, 4, 40);
@@ -576,7 +659,7 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
     // PER clamped
     const per = clamp(12 + pts * 0.6 + ast * 0.4 + reb * 0.35 + stl * 1.4 + blk * 1.1, 8, 32);
 
-    const score = pts * 0.55 + reb * 0.30 + ast * 0.25 + per * 0.15;
+    const score = pts * 0.55 + reb * 0.30 + ast * 0.25 + per * 0.15 + stl * 0.4 + blk * 0.4;
 
     const seasonPlayers = [];
 
@@ -613,13 +696,14 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
     const topReb = [...seasonPlayers].sort((a, b) => b.reb - a.reb).slice(0, 10);
     const topPer = [...seasonPlayers].sort((a, b) => b.per - a.per).slice(0, 10);
 
-    // awards
-    const mvp = [...seasonPlayers].sort((a, b) => b.score - a.score)[0];
+    // awards (strict: only top performers win)
+    const seasonByScore = [...seasonPlayers].sort((a, b) => b.score - a.score);
+    const mvp = seasonByScore[0];
 
     // ROY: year 1 only, custom always eligible
     let roy = null;
     if (year === 1) {
-      roy = [...seasonPlayers].sort((a, b) => b.score - a.score)[0];
+      roy = seasonByScore[0];
     }
 
     // MIP: biggest jump in score vs last year (for custom + a sample of league)
@@ -629,7 +713,6 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
         let prev = pl.isCustom ? lastYearScore : pl.score - (Math.random() * 3); // proxy
         return { ...pl, delta: pl.score - prev };
       }).sort((a, b) => b.delta - a.delta);
-
       mip = improv[0];
     }
 
@@ -646,7 +729,7 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
     // All-Pro proxy: top 15 PER
     const allPro = [...seasonPlayers].sort((a, b) => b.per - a.per).slice(0, 15).map(p => p.name);
 
-    // update awards for custom
+    // update awards for custom (must be top of league)
     if (mvp.name === custom.name) awards.MVP++;
     if (roy && roy.name === custom.name) awards.ROY++;
     if (mip && mip.name === custom.name) awards.MIP++;
@@ -672,7 +755,13 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
 
   // Hall of Fame decision (simple):
   // at least 5 All-Pro OR 1 MVP OR 2+ Championships + All-Pro
-  const hof = (awards.AllPro >= 5) || (awards.MVP >= 1) || (awards.Champs >= 2 && awards.AllPro >= 2);
+  // HOF requires elite league-level performance
+  const careerScores = seasons.map(s => s.custom.pts * 0.55 + s.custom.reb * 0.30 + s.custom.ast * 0.25 + s.custom.per * 0.15);
+  const careerAvgScore = careerScores.reduce((a, b) => a + b, 0) / careerScores.length;
+  const hof =
+    (awards.MVP >= 1 && careerAvgScore > 20) ||
+    (awards.AllPro >= 6 && careerAvgScore > 18) ||
+    (awards.Champs >= 2 && awards.AllPro >= 3 && careerAvgScore > 17);
 
   return { seasons, awards, hof };
 }
