@@ -381,6 +381,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('simulateLocal').onclick = runDeterministicSim;
   document.getElementById('positionLockToggle').onchange = e =>
     positionLocked = e.target.checked;
+  const statsHelpBtn = document.getElementById('statsHelp');
+  if (statsHelpBtn) statsHelpBtn.onclick = openStatsHelpModal;
 });
 
 function startGame() {
@@ -494,6 +496,8 @@ function teamRow(i, pos) {
 function openModal(participantIndex, key, isTeam = false) {
   const modal = document.getElementById('modalOverlay');
   const body = document.getElementById('modalBody');
+  const legend = document.getElementById('modalLegend');
+  if (legend) legend.style.display = '';
   body.innerHTML = '';
 
   let pool = players.filter(p => inEra(p));
@@ -544,6 +548,39 @@ function openModal(participantIndex, key, isTeam = false) {
   });
 
   body.appendChild(table);
+  modal.classList.remove('hidden');
+  document.getElementById('modalClose').onclick =
+    () => modal.classList.add('hidden');
+}
+
+function openStatsHelpModal() {
+  const modal = document.getElementById('modalOverlay');
+  const body = document.getElementById('modalBody');
+  const title = document.getElementById('modalTitle');
+  const legend = document.getElementById('modalLegend');
+  if (legend) legend.style.display = 'none';
+  title.textContent = 'How the Simulation Works';
+
+  body.innerHTML = `
+    <div class="card" style="box-shadow:none; margin:0;">
+      <p class="muted">
+        The draft mode compares the real career averages of the players you select.
+        Attribute mode combines each picked player’s stat into one custom profile.
+      </p>
+      <h3>Athleticism (ATH)</h3>
+      <pre class="sim-output" style="margin-top:6px; white-space:pre-wrap;">ATH = 0.45*perNorm + 0.20*fgBonus + 0.20*rebBonus + 0.10*durability + 0.05*heightBonus
+
+perNorm = clamp((PER-15)/10, -1.5, 1.5)
+fgBonus = (FG% - 0.45) * 4
+rebBonus = min(REB / 10, 1.2)
+durability = min(G / 1200, 1.0)
+heightBonus = (Height - 78) / 12</pre>
+      <p class="muted">
+        In plain English: ATH blends efficiency, shooting, rebounding, durability, and height into one score.
+      </p>
+    </div>
+  `;
+
   modal.classList.remove('hidden');
   document.getElementById('modalClose').onclick =
     () => modal.classList.add('hidden');

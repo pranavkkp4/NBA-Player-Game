@@ -612,31 +612,6 @@ function openFutureModal(attrKey) {
 
   const tb = table.querySelector("tbody");
 
-  if (attrKey === "athleticism") {
-    const note = document.createElement("div");
-    note.className = "muted";
-    note.style.marginBottom = "8px";
-    note.innerHTML = `
-      <details open>
-        <summary><strong>ATH Equation</strong></summary>
-        <div style="margin-top:6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9rem;">
-          ATH = 0.45*perNorm + 0.20*fgBonus + 0.20*rebBonus + 0.10*durability + 0.05*heightBonus
-        </div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85rem; margin-top: 4px;">
-          perNorm=clamp((PER-15)/10,-1.5,1.5),
-          fgBonus=(FG%-0.45)*4,
-          rebBonus=min(REB/10,1.2),
-          durability=min(G/1200,1.0),
-          heightBonus=(Height-78)/12
-        </div>
-        <div style="margin-top:6px;">
-          In plain English: it blends efficiency, shooting, rebounding, durability, and height into one athleticism score.
-        </div>
-      </details>
-    `;
-    body.appendChild(note);
-  }
-
   pool.forEach(p => {
     const posGroup = getPositionGroup(p.Position);
     const tr = document.createElement("tr");
@@ -699,6 +674,55 @@ function openFutureModal(attrKey) {
   });
 
   body.appendChild(table);
+
+  document.getElementById("modalClose").onclick = () => modal.classList.add("hidden");
+  modal.classList.remove("hidden");
+}
+
+function openStatsHelpModal() {
+  const modal = document.getElementById("modalOverlay");
+  const body = document.getElementById("modalBody");
+  const title = document.getElementById("modalTitle");
+  const legend = document.getElementById("modalLegend");
+  title.textContent = "How the Simulation Works";
+  if (legend) legend.style.display = "none";
+
+  body.innerHTML = `
+    <div class="card" style="box-shadow:none; margin:0;">
+      <p class="muted">
+        This sim builds a custom player by borrowing each stat from the players you picked.
+        It then runs a 10-year career arc that starts below those averages, peaks above them,
+        and declines later in the career.
+      </p>
+      <h3>Career Arc (Plain English)</h3>
+      <p class="muted">
+        Early years are below your selected averages, mid-career reaches a peak, and later
+        years taper off. Players with higher longevity (more career games) peak later and
+        stay in their prime longer.
+      </p>
+      <h3>Athleticism (ATH)</h3>
+      <pre class="sim-output" style="margin-top:6px; white-space:pre-wrap;">ATH = 0.45*perNorm + 0.20*fgBonus + 0.20*rebBonus + 0.10*durability + 0.05*heightBonus
+
+perNorm = clamp((PER-15)/10, -1.5, 1.5)
+fgBonus = (FG% - 0.45) * 4
+rebBonus = min(REB / 10, 1.2)
+durability = min(G / 1200, 1.0)
+heightBonus = (Height - 78) / 12</pre>
+      <p class="muted">
+        In plain English: ATH blends efficiency, shooting, rebounding, durability, and height into one score.
+      </p>
+      <h3>Hall of Fame</h3>
+      <p class="muted">
+        HOF is awarded only with elite, sustained output. The sim checks MVPs, All-Pro counts,
+        championships, and your career average performance score.
+      </p>
+      <pre class="sim-output" style="margin-top:6px; white-space:pre-wrap;">HOF if any are true:
+- MVP >= 1 AND careerAvgScore > 20
+- All-Pro >= 6 AND careerAvgScore > 18
+- Championships >= 2 AND All-Pro >= 3 AND careerAvgScore > 17
+- MVP >= 4 AND All-Pro >= 7 (automatic)</pre>
+    </div>
+  `;
 
   document.getElementById("modalClose").onclick = () => modal.classList.add("hidden");
   modal.classList.remove("hidden");
@@ -900,7 +924,8 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
   const hof =
     (awards.MVP >= 1 && careerAvgScore > 20) ||
     (awards.AllPro >= 6 && careerAvgScore > 18) ||
-    (awards.Champs >= 2 && awards.AllPro >= 3 && careerAvgScore > 17);
+    (awards.Champs >= 2 && awards.AllPro >= 3 && careerAvgScore > 17) ||
+    (awards.MVP >= 4 && awards.AllPro >= 7);
 
   return { seasons, awards, hof, customName: custom.name };
 }
@@ -976,12 +1001,20 @@ document.addEventListener("DOMContentLoaded", async () => {
     resetPlayerBuilder();
   };
 
+  document.getElementById("statsHelp").onclick = () => {
+    openStatsHelpModal();
+  };
+
   document.getElementById("simulateFuture").onclick = () => {
     if (!playersLoaded) return alert("Dataset still loading.");
 
     eraFilter = document.getElementById("futureEra").value;
 
-    const name = document.getElementById("playerName").value.trim() || "Custom Player";
+    const name = document.getElementById("playerName").value.trim();
+    if (!name) {
+      alert("Please enter a player name before simulating.");
+      return;
+    }
 
     // ensure all attributes selected
     for (const a of activeAttributes) {
