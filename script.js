@@ -660,12 +660,13 @@ function buildPlayerFromAttributes(p) {
   const passing = p.attributes.passing?.player;
   const rebounding = p.attributes.rebounding?.player;
   const longevity = p.attributes.longevity?.player;
+  const posAdj = positionAdjustments(p.position);
 
   return {
     name: p.teamName || p.name,
-    pts: Number(shooting?.PTS) || 0,
-    ast: Number(passing?.AST) || 0,
-    reb: Number(rebounding?.TRB) || 0,
+    pts: (Number(shooting?.PTS) || 0) + posAdj.pts,
+    ast: (Number(passing?.AST) || 0) + posAdj.ast,
+    reb: (Number(rebounding?.TRB) || 0) + posAdj.reb,
     per: Number(shooting?.PER) || Number(passing?.PER) || Number(rebounding?.PER) || 0,
     fg: Number(shooting?.['FG%']) || 0,
     g: Number(longevity?.G) || 0
@@ -740,14 +741,26 @@ function scoreFromStats(s, isTeam) {
   return Math.max(60, Math.min(140, (raw / (isTeam ? 2.5 : 1.6)) + pace));
 }
 
+function positionAdjustments(pos) {
+  const p = String(pos || '').toLowerCase();
+  if (p.includes('point')) return { pts: 0, ast: 0.7, reb: -0.5 };
+  if (p.includes('shooting')) return { pts: 1.5, ast: 0, reb: -0.5 };
+  if (p.includes('center')) return { pts: -1.5, ast: -1.0, reb: 3.0 };
+  return { pts: 0, ast: 0, reb: 0 };
+}
+
 function simulateGameStory(a, b, detail, isTeam) {
   const seed = seedFromNames(a.name, b.name);
   const rng = rngFromSeed(seed);
   const baseA = scoreFromStats(a, isTeam);
   const baseB = scoreFromStats(b, isTeam);
   const variance = () => (rng() - 0.5) * 8;
-  const scoreA = Math.round(baseA + variance());
-  const scoreB = Math.round(baseB + variance());
+  let scoreA = Math.round(baseA + variance());
+  let scoreB = Math.round(baseB + variance());
+  if (scoreA === scoreB) {
+    if (baseA >= baseB) scoreA += 1;
+    else scoreB += 1;
+  }
 
   const lines = [];
   const leader = scoreA >= scoreB ? a : b;
