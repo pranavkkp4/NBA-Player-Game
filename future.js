@@ -822,9 +822,19 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
       teamTotals[pl.team] = (teamTotals[pl.team] || 0) + pl.score;
     });
 
-    const champTeam = Object.entries(teamTotals).sort((a, b) => b[1] - a[1])[0][0];
+    const teamEntries = Object.entries(teamTotals).sort((a, b) => b[1] - a[1]);
+    const champTeam = teamEntries[0][0];
     const champCandidates = seasonPlayers.filter(pl => pl.team === champTeam);
     const finalsMVP = [...champCandidates].sort((a, b) => b.score - a.score)[0];
+
+    const minScore = teamEntries[teamEntries.length - 1][1];
+    const maxScore = teamEntries[0][1];
+    const span = Math.max(1, maxScore - minScore);
+    const teamWins = {};
+    teamEntries.forEach(([team, score]) => {
+      const pct = (score - minScore) / span;
+      teamWins[team] = Math.round(20 + pct * 40); // 20..60
+    });
 
     // All-Pro proxy: top 15 PER
     const allPro = [...seasonPlayers].sort((a, b) => b.per - a.per).slice(0, 15).map(p => p.name);
@@ -841,7 +851,7 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
 
     seasons.push({
       year,
-      custom: { pts, ast, reb, stl, blk, per, team: custom.team },
+      custom: { name: custom.name, pts, ast, reb, stl, blk, per, team: custom.team, wins: teamWins[custom.team] || 0 },
       leaderboards: { topPts, topAst, topReb, topPer },
       awards: {
         MVP: mvp,
@@ -863,7 +873,7 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
     (awards.AllPro >= 6 && careerAvgScore > 18) ||
     (awards.Champs >= 2 && awards.AllPro >= 3 && careerAvgScore > 17);
 
-  return { seasons, awards, hof };
+  return { seasons, awards, hof, customName: custom.name };
 }
 
 /* =========================
@@ -884,7 +894,8 @@ function renderResults(output) {
 
   output.seasons.forEach(s => {
     text += `--- Season ${s.year} (${s.custom.team}) ---\n`;
-    text += `Custom Stats: PTS ${s.custom.pts.toFixed(1)} | AST ${s.custom.ast.toFixed(1)} | REB ${s.custom.reb.toFixed(1)} | STL ${s.custom.stl.toFixed(1)} | BLK ${s.custom.blk.toFixed(1)} | PER ${s.custom.per.toFixed(1)}\n`;
+    text += `${s.custom.name} Stats: PTS ${s.custom.pts.toFixed(1)} | AST ${s.custom.ast.toFixed(1)} | REB ${s.custom.reb.toFixed(1)} | STL ${s.custom.stl.toFixed(1)} | BLK ${s.custom.blk.toFixed(1)} | PER ${s.custom.per.toFixed(1)}\n`;
+    text += `Team Wins: ${s.custom.wins}\n`;
     text += `MVP: ${s.awards.MVP.name} (${s.awards.MVP.team})\n`;
     if (s.awards.ROY) text += `ROY: ${s.awards.ROY.name} (${s.awards.ROY.team})\n`;
     if (s.awards.MIP) text += `MIP: ${s.awards.MIP.name} (${s.awards.MIP.team})\n`;
@@ -893,22 +904,26 @@ function renderResults(output) {
 
     text += `Top 10 PTS:\n`;
     s.leaderboards.topPts.forEach((p, idx) => {
-      text += `${idx + 1}. ${p.name} (${p.team}) - ${p.pts.toFixed(1)}\n`;
+      const mark = p.name === s.custom.name ? " *" : "";
+      text += `${idx + 1}. ${p.name} (${p.team}) - ${p.pts.toFixed(1)}${mark}\n`;
     });
 
     text += `Top 10 AST:\n`;
     s.leaderboards.topAst.forEach((p, idx) => {
-      text += `${idx + 1}. ${p.name} (${p.team}) - ${p.ast.toFixed(1)}\n`;
+      const mark = p.name === s.custom.name ? " *" : "";
+      text += `${idx + 1}. ${p.name} (${p.team}) - ${p.ast.toFixed(1)}${mark}\n`;
     });
 
     text += `Top 10 REB:\n`;
     s.leaderboards.topReb.forEach((p, idx) => {
-      text += `${idx + 1}. ${p.name} (${p.team}) - ${p.reb.toFixed(1)}\n`;
+      const mark = p.name === s.custom.name ? " *" : "";
+      text += `${idx + 1}. ${p.name} (${p.team}) - ${p.reb.toFixed(1)}${mark}\n`;
     });
 
     text += `Top 10 PER:\n`;
     s.leaderboards.topPer.forEach((p, idx) => {
-      text += `${idx + 1}. ${p.name} (${p.team}) - ${p.per.toFixed(1)}\n`;
+      const mark = p.name === s.custom.name ? " *" : "";
+      text += `${idx + 1}. ${p.name} (${p.team}) - ${p.per.toFixed(1)}${mark}\n`;
     });
 
     text += `\n`;

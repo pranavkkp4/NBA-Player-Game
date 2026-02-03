@@ -274,3 +274,24 @@ input:focus, select:focus{
   border:1px solid var(--border);
   color:var(--muted);
 }
+
+.legend{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+  align-items:center;
+  margin-top:10px;
+  color:var(--muted);
+  font-size:0.9rem;
+}
+
+.legend .pill{
+  color:#111;
+  font-weight:700;
+}
+
+.legend .stat-gold{color:#111}
+.legend .stat-green{color:#b7ffd9}
+.legend .stat-yellow{color:#ffe57a}
+.legend .stat-orange{color:#ffd1a6}
+.legend .stat-red{color:#ffc0c0}
