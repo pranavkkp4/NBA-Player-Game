@@ -24,7 +24,7 @@ const ATTRIBUTES = [
 ];
 
 const ATTR_MAP = {
-  shooting: "FG%",
+  shooting: "PTS",
   passing: "AST",
   rebounding: "TRB",
   steals: "STL",
@@ -43,6 +43,7 @@ const NUMERIC_JSON_COLS = new Set([
   "Height", "Weight", "G", "PTS", "TRB", "AST", "STL", "BLK",
   "FG%", "FG3%", "FT%", "eFG%", "PER", "WS"
 ]);
+const COLOR_STATS = ["PTS", "AST", "TRB", "PER", "FG%", "STL", "BLK", "G", "Height"];
 
 /* =========================
    Athleticism (YOUR MODEL)
@@ -240,6 +241,112 @@ function zScore(value, statKey) {
   return (val - entry.mean) / entry.std;
 }
 
+function getPositionGroup(position) {
+  const pos = String(position || "").toLowerCase();
+  if (pos.includes("center")) return "C";
+  if (pos.includes("guard")) return "G";
+  if (pos.includes("forward")) return "F";
+  return "F";
+}
+
+function buildStatContext(pool) {
+  const context = {
+    top10: {},
+    pos: { G: {}, F: {}, C: {} }
+  };
+
+  COLOR_STATS.forEach(stat => {
+    const values = pool.map(p => Number(p[stat])).filter(v => Number.isFinite(v));
+    const sorted = [...values].sort((a, b) => b - a);
+    context.top10[stat] = sorted[Math.min(9, sorted.length - 1)] ?? null;
+  });
+
+  ["G", "F", "C"].forEach(g => {
+    const groupPlayers = pool.filter(p => getPositionGroup(p.Position) === g);
+    COLOR_STATS.forEach(stat => {
+      const vals = groupPlayers.map(p => Number(p[stat])).filter(v => Number.isFinite(v));
+      if (!vals.length) {
+        context.pos[g][stat] = { mean: 0, std: 1 };
+        return;
+      }
+      const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+      const variance = vals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / vals.length;
+      const std = Math.sqrt(variance) || 1;
+      context.pos[g][stat] = { mean, std };
+    });
+  });
+
+  const athVals = pool.map(p => computeAthleticism({
+    per: p.PER,
+    fg: p["FG%"],
+    reb: p.TRB,
+    g: p.G,
+    height: p.Height
+  })).filter(v => Number.isFinite(v));
+  const athSorted = [...athVals].sort((a, b) => b - a);
+  context.top10.ATH = athSorted[Math.min(9, athSorted.length - 1)] ?? null;
+  const athMean = athVals.reduce((a, b) => a + b, 0) / (athVals.length || 1);
+  const athVar = athVals.reduce((a, b) => a + Math.pow(b - athMean, 2), 0) / (athVals.length || 1);
+  context.pos.G.ATH = { mean: athMean, std: Math.sqrt(athVar) || 1 };
+  context.pos.F.ATH = { mean: athMean, std: Math.sqrt(athVar) || 1 };
+  context.pos.C.ATH = { mean: athMean, std: Math.sqrt(athVar) || 1 };
+
+  return context;
+}
+
+function statClass(value, stat, posGroup, context) {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return "";
+  const top = context.top10[stat];
+  if (Number.isFinite(top) && v >= top) return "stat-gold";
+  const entry = context.pos[posGroup]?.[stat];
+  if (!entry) return "";
+  const mean = entry.mean;
+  const std = entry.std || 1;
+  if (v > mean + 0.5 * std) return "stat-green";
+  if (v >= mean - 0.5 * std) return "stat-yellow";
+  if (v >= mean - 1.0 * std) return "stat-orange";
+  return "stat-red";
+}
+
+function clamp01(x) {
+  return Math.max(0, Math.min(1, x));
+}
+
+function positionMultipliers(pos) {
+  const p = String(pos || "").toLowerCase();
+  if (p.includes("guard")) {
+    return { pts: 1.02, ast: 1.15, reb: 0.85, stl: 1.1, blk: 0.8 };
+  }
+  if (p.includes("center")) {
+    return { pts: 0.98, ast: 0.8, reb: 1.2, stl: 0.8, blk: 1.25 };
+  }
+  return { pts: 1.0, ast: 0.95, reb: 1.05, stl: 0.95, blk: 1.0 };
+}
+
+function careerFactorByYear(yearIndex, longevityG) {
+  const g = Number(longevityG);
+  const gNorm = clamp01((g - 300) / 1200); // 0..1
+  const peakStart = Math.round(2 + gNorm * 2); // 2..4
+  const peakLength = Math.round(1 + gNorm * 3); // 1..4
+  const peakEnd = Math.min(10, peakStart + peakLength - 1);
+
+  const startFloor = 0.75 + gNorm * 0.08; // 0.75..0.83
+  const peakCeil = 1.08 + gNorm * 0.12; // 1.08..1.20
+  const declineFloor = 0.82 + gNorm * 0.05; // 0.82..0.87
+
+  if (yearIndex < peakStart) {
+    const t = (yearIndex - 1) / Math.max(1, peakStart - 1);
+    return startFloor + t * (1.0 - startFloor);
+  }
+  if (yearIndex <= peakEnd) {
+    const t = (yearIndex - peakStart) / Math.max(1, peakEnd - peakStart);
+    return 1.0 + t * (peakCeil - 1.0);
+  }
+  const t = (yearIndex - peakEnd) / Math.max(1, 10 - peakEnd);
+  return peakCeil - t * (peakCeil - declineFloor);
+}
+
 /* =========================
    INIT: Database + Teams
    ========================= */
@@ -435,7 +542,7 @@ function openTeamModal() {
   table.innerHTML = `
     <thead>
       <tr>
-        <th>Team</th>
+        <th>Team</th><th></th>
       </tr>
     </thead>
     <tbody></tbody>
@@ -444,8 +551,8 @@ function openTeamModal() {
   const tb = table.querySelector("tbody");
   teamOptions.forEach(team => {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${team}</td>`;
-    tr.onclick = () => {
+    tr.innerHTML = `<td>${team}</td><td><button class="dice-btn">Select</button></td>`;
+    tr.querySelector("button").onclick = () => {
       chosenTeam = team;
       const input = document.getElementById("future-team-value");
       if (input) input.value = team;
@@ -473,6 +580,7 @@ function openFutureModal(attrKey) {
   body.innerHTML = "";
 
   let pool = players.filter(p => inEra(p));
+  const context = buildStatContext(pool);
   pool = pool.sort(() => 0.5 - Math.random()).slice(0, 10);
 
   const table = document.createElement("table");
@@ -481,7 +589,7 @@ function openFutureModal(attrKey) {
     table.innerHTML = `
       <thead>
         <tr>
-          <th>Name</th><th>Pos</th><th>ATH</th>
+          <th>Name</th><th>Pos</th><th>ATH</th><th></th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -491,7 +599,7 @@ function openFutureModal(attrKey) {
       <thead>
         <tr>
           <th>Name</th><th>Pos</th><th>PTS</th><th>AST</th>
-          <th>TRB</th><th>PER</th><th>FG%</th><th>G</th><th>Hgt</th>
+          <th>TRB</th><th>PER</th><th>FG%</th><th>G</th><th>Hgt</th><th></th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -501,6 +609,7 @@ function openFutureModal(attrKey) {
   const tb = table.querySelector("tbody");
 
   pool.forEach(p => {
+    const posGroup = getPositionGroup(p.Position);
     const tr = document.createElement("tr");
     if (attrKey === "athleticism") {
       const ath = computeAthleticism({
@@ -513,23 +622,25 @@ function openFutureModal(attrKey) {
       tr.innerHTML = `
         <td>${p.Name}</td>
         <td>${p.Position}</td>
-        <td>${fmt(ath, 2)}</td>
+        <td class="${statClass(ath, "ATH", posGroup, context)}">${fmt(ath, 2)}</td>
+        <td><button class="dice-btn">Select</button></td>
       `;
     } else {
       tr.innerHTML = `
         <td>${p.Name}</td>
         <td>${p.Position}</td>
-        <td>${fmt(p.PTS, 1)}</td>
-        <td>${fmt(p.AST, 1)}</td>
-        <td>${fmt(p.TRB, 1)}</td>
-        <td>${fmt(p.PER, 1)}</td>
-        <td>${fmt(p["FG%"], 1)}</td>
-        <td>${fmt(p.G, 0)}</td>
-        <td>${fmt(p.Height, 0)}</td>
+        <td class="${statClass(p.PTS, "PTS", posGroup, context)}">${fmt(p.PTS, 1)}</td>
+        <td class="${statClass(p.AST, "AST", posGroup, context)}">${fmt(p.AST, 1)}</td>
+        <td class="${statClass(p.TRB, "TRB", posGroup, context)}">${fmt(p.TRB, 1)}</td>
+        <td class="${statClass(p.PER, "PER", posGroup, context)}">${fmt(p.PER, 1)}</td>
+        <td class="${statClass(p["FG%"], "FG%", posGroup, context)}">${fmt(p["FG%"], 1)}</td>
+        <td class="${statClass(p.G, "G", posGroup, context)}">${fmt(p.G, 0)}</td>
+        <td class="${statClass(p.Height, "Height", posGroup, context)}">${fmt(p.Height, 0)}</td>
+        <td><button class="dice-btn">Select</button></td>
       `;
     }
 
-    tr.onclick = () => {
+    tr.querySelector("button").onclick = () => {
       let value;
       if (attrKey === "athleticism") {
         value = computeAthleticism({
@@ -597,8 +708,8 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
         pts: num(p.PTS),
         ast: num(p.AST),
         reb: num(p.TRB),
-        stl: 0,
-        blk: 0,
+        stl: num(p.STL),
+        blk: num(p.BLK),
         per: num(p.PER),
         fg: num(p["FG%"]),
         ath
@@ -610,16 +721,17 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
   const customTeam = teamOverride && teams.includes(teamOverride)
     ? teamOverride
     : teams[Math.floor(Math.random() * teams.length)];
+  const posMult = positionMultipliers(customPosition);
   const custom = {
     name: customName,
     team: customTeam,
     isCustom: true,
     base: {
-      fg: peak.fg,
-      ast: peak.ast,
-      reb: peak.reb,
-      stl: peak.stl,
-      blk: peak.blk,
+      pts: peak.pts * posMult.pts,
+      ast: peak.ast * posMult.ast,
+      reb: peak.reb * posMult.reb,
+      stl: peak.stl * posMult.stl,
+      blk: peak.blk * posMult.blk,
       g: peak.g,
       ath: peak.ath,
       height: peak.height
@@ -632,32 +744,20 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
   // rookies need improvement baseline
   let lastYearScore = null;
 
-  const talentZ = [
-    zScore(peak.fg, "FG%"),
-    zScore(peak.ast, "AST"),
-    zScore(peak.reb, "TRB"),
-    zScore(peak.stl, "STL"),
-    zScore(peak.blk, "BLK"),
-    zScore(peak.g, "G"),
-    zScore(peak.height, "Height"),
-    zScore(peak.ath, "ATH")
-  ].reduce((a, b) => a + b, 0) / 8;
-
   for (let year = 1; year <= 10; year++) {
-    const progress = 0.5 + ((year - 1) / 9) * 0.5; // 50% -> 100%
-    const talentFactor = clamp(0.85 + talentZ * 0.07, 0.6, 1.15);
-    const yearVariance = clamp(0.9 + randn() * 0.08, 0.75, 1.2);
-    const factor = progress * talentFactor * yearVariance;
+    const curve = careerFactorByYear(year, custom.base.g);
+    const yearVariance = clamp(0.95 + randn() * 0.06, 0.85, 1.1);
+    const factor = curve * yearVariance;
 
-    // simulate custom seasonal stats from selected peaks
-    const pts = clamp((custom.base.fg * 40 + custom.base.ath * 18 + randn() * 1.2) * factor, 4, 40);
-    const ast = clamp((custom.base.ast + custom.base.ath * 2 + randn() * 0.6) * factor, 0.5, 15);
-    const reb = clamp((custom.base.reb + (custom.base.height - 72) * 0.12 + randn() * 0.8) * factor, 0.5, 18);
-    const stl = clamp((custom.base.stl + custom.base.ath * 0.6 + randn() * 0.2) * factor, 0.1, 3.0);
-    const blk = clamp((custom.base.blk + (custom.base.height - 78) * 0.05 + randn() * 0.2) * factor, 0.0, 3.5);
+    // simulate custom seasonal stats around selected career averages + curve
+    const pts = clamp((custom.base.pts + randn() * 1.8) * factor, 0, 45);
+    const ast = clamp((custom.base.ast + randn() * 0.7) * factor, 0, 15);
+    const reb = clamp((custom.base.reb + randn() * 0.9) * factor, 0, 18);
+    const stl = clamp((custom.base.stl + randn() * 0.25) * factor, 0, 3.5);
+    const blk = clamp((custom.base.blk + randn() * 0.25) * factor, 0, 3.5);
 
     // PER clamped
-    const per = clamp(12 + pts * 0.6 + ast * 0.4 + reb * 0.35 + stl * 1.4 + blk * 1.1, 8, 32);
+    const per = clamp(10 + pts * 0.55 + ast * 0.45 + reb * 0.35 + stl * 1.3 + blk * 1.2, 8, 32);
 
     const score = pts * 0.55 + reb * 0.30 + ast * 0.25 + per * 0.15 + stl * 0.4 + blk * 0.4;
 
@@ -673,11 +773,11 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
 
     // simulate league players around base stats with mild noise
     league.forEach(pl => {
-      const ptsL = clamp(pl.base.pts + randn() * 2.1, 0, 35);
-      const astL = clamp(pl.base.ast + randn() * 1.1, 0, 15);
-      const rebL = clamp(pl.base.reb + randn() * 1.5, 0, 18);
-      const stlL = clamp(pl.base.stl + randn() * 0.4, 0, 3);
-      const blkL = clamp(pl.base.blk + randn() * 0.4, 0, 4);
+      const ptsL = clamp(pl.base.pts + randn() * 2.0, 0, 40);
+      const astL = clamp(pl.base.ast + randn() * 1.0, 0, 15);
+      const rebL = clamp(pl.base.reb + randn() * 1.2, 0, 18);
+      const stlL = clamp(pl.base.stl + randn() * 0.35, 0, 3.5);
+      const blkL = clamp(pl.base.blk + randn() * 0.35, 0, 4);
       const perL = clamp(pl.base.per + randn() * 2.5, 5, 32);
 
       const scoreL = ptsL * 0.55 + rebL * 0.30 + astL * 0.25 + perL * 0.15;
@@ -848,7 +948,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     const peak = {
-      fg: customPeak.shooting ? customPeak.shooting.value : 0,
+      pts: customPeak.shooting ? customPeak.shooting.value : 0,
       ast: customPeak.passing ? customPeak.passing.value : 0,
       reb: customPeak.rebounding ? customPeak.rebounding.value : 0,
       stl: customPeak.steals ? customPeak.steals.value : 0,

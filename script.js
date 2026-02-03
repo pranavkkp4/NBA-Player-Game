@@ -41,6 +41,7 @@ const NUMERIC_JSON_COLS = new Set([
   'Height', 'Weight', 'G', 'PTS', 'TRB', 'AST', 'STL', 'BLK',
   'FG%', 'FG3%', 'FT%', 'eFG%', 'PER', 'WS'
 ]);
+const COLOR_STATS = ['PTS', 'AST', 'TRB', 'PER', 'FG%'];
 
 /* =========================
    Athleticism (YOUR MODEL)
@@ -208,6 +209,58 @@ function fmt(value, digits = 1) {
   const num = Number(value);
   if (!Number.isFinite(num)) return 'N/A';
   return num.toFixed(digits);
+}
+
+function getPositionGroup(posArray) {
+  const roles = new Set(posArray || []);
+  if (roles.has('Center') && !roles.has('Guard')) return 'C';
+  if (roles.has('Guard') && !roles.has('Center')) return 'G';
+  return 'F';
+}
+
+function buildStatContext(pool) {
+  const context = {
+    top10: {},
+    pos: { G: {}, F: {}, C: {} }
+  };
+
+  COLOR_STATS.forEach(stat => {
+    const values = pool.map(p => Number(p[stat])).filter(v => Number.isFinite(v));
+    const sorted = [...values].sort((a, b) => b - a);
+    context.top10[stat] = sorted[Math.min(9, sorted.length - 1)] ?? null;
+  });
+
+  ['G', 'F', 'C'].forEach(g => {
+    const groupPlayers = pool.filter(p => getPositionGroup(p.PositionArr) === g);
+    COLOR_STATS.forEach(stat => {
+      const vals = groupPlayers.map(p => Number(p[stat])).filter(v => Number.isFinite(v));
+      if (!vals.length) {
+        context.pos[g][stat] = { mean: 0, std: 1 };
+        return;
+      }
+      const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+      const variance = vals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / vals.length;
+      const std = Math.sqrt(variance) || 1;
+      context.pos[g][stat] = { mean, std };
+    });
+  });
+
+  return context;
+}
+
+function statClass(value, stat, posGroup, context) {
+  const v = Number(value);
+  if (!Number.isFinite(v)) return '';
+  const top = context.top10[stat];
+  if (Number.isFinite(top) && v >= top) return 'stat-gold';
+  const entry = context.pos[posGroup]?.[stat];
+  if (!entry) return '';
+  const mean = entry.mean;
+  const std = entry.std || 1;
+  if (v > mean + 0.5 * std) return 'stat-green';
+  if (v >= mean - 0.5 * std) return 'stat-yellow';
+  if (v >= mean - 1.0 * std) return 'stat-orange';
+  return 'stat-red';
 }
 
 /* =========================
@@ -444,6 +497,7 @@ function openModal(participantIndex, key, isTeam = false) {
   body.innerHTML = '';
 
   let pool = players.filter(p => inEra(p));
+  const context = buildStatContext(pool);
 
   if (isTeam && positionLocked) {
     pool = pool.filter(p => positionMatchesSlot(p.PositionArr, key));
@@ -459,6 +513,7 @@ function openModal(participantIndex, key, isTeam = false) {
       <tr>
         <th>Name</th><th>Pos</th><th>PTS</th>
         <th>AST</th><th>TRB</th><th>PER</th><th>FG%</th>
+        <th></th>
       </tr>
     </thead>
     <tbody></tbody>
@@ -467,18 +522,20 @@ function openModal(participantIndex, key, isTeam = false) {
   const tb = table.querySelector('tbody');
 
   pool.forEach(p => {
+    const posGroup = getPositionGroup(p.PositionArr);
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${p.Name}</td>
       <td>${p.Position}</td>
-      <td>${fmt(p.PTS, 1)}</td>
-      <td>${fmt(p.AST, 1)}</td>
-      <td>${fmt(p.TRB, 1)}</td>
-      <td>${fmt(p.PER, 1)}</td>
-      <td>${fmt(p['FG%'], 1)}</td>
+      <td class="${statClass(p.PTS, 'PTS', posGroup, context)}">${fmt(p.PTS, 1)}</td>
+      <td class="${statClass(p.AST, 'AST', posGroup, context)}">${fmt(p.AST, 1)}</td>
+      <td class="${statClass(p.TRB, 'TRB', posGroup, context)}">${fmt(p.TRB, 1)}</td>
+      <td class="${statClass(p.PER, 'PER', posGroup, context)}">${fmt(p.PER, 1)}</td>
+      <td class="${statClass(p['FG%'], 'FG%', posGroup, context)}">${fmt(p['FG%'], 1)}</td>
+      <td><button class="dice-btn">Select</button></td>
     `;
 
-    tr.onclick = () => {
+    tr.querySelector('button').onclick = () => {
       selectPlayer(participantIndex, key, p, isTeam);
       modal.classList.add('hidden');
     };

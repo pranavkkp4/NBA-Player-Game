@@ -252,6 +252,21 @@ input:focus, select:focus{
   color:var(--muted);
 }
 
+.stat-gold{color:#111; background:#f5c542}
+.stat-green{color:#0b2; background:#1c3a2a}
+.stat-yellow{color:#f5d000; background:#3a3418}
+.stat-orange{color:#ffb347; background:#3a2a12}
+.stat-red{color:#ff6b6b; background:#3a1a1a}
+
+.pick-table td.stat-gold,
+.pick-table td.stat-green,
+.pick-table td.stat-yellow,
+.pick-table td.stat-orange,
+.pick-table td.stat-red{
+  border-radius:8px;
+  padding:8px;
+}
+
 .pill{
   display:inline-block;
   padding:4px 8px;
