@@ -435,11 +435,11 @@ function renderGame() {
 
     if (gameMode === 'attribute') {
       ATTRIBUTES.forEach(attr => {
-        rows.appendChild(attributeRow(i, attr));
+        rows.appendChild(attributeRow(i, attr, p));
       });
     } else {
       ['PG', 'SG', 'SF', 'PF', 'C'].forEach(pos => {
-        rows.appendChild(teamRow(i, pos));
+        rows.appendChild(teamRow(i, pos, p));
       });
     }
 
@@ -450,7 +450,7 @@ function renderGame() {
 /* =========================
    ATTRIBUTE ROW
    ========================= */
-function attributeRow(i, attr) {
+function attributeRow(i, attr, participant) {
   const row = document.createElement('div');
   row.className = 'attr-row';
 
@@ -460,7 +460,10 @@ function attributeRow(i, attr) {
 
   const value = document.createElement('div');
   value.className = 'attr-value';
-  value.innerHTML = `<input readonly placeholder="Not chosen">`;
+  const selected = participant?.attributes?.[attr];
+  const val = selected && Number.isFinite(selected.value) ? selected.value.toFixed(2) : '';
+  const display = selected ? `${selected.source}${val ? ` (${val})` : ''}` : '';
+  value.innerHTML = `<input readonly placeholder="Not chosen" value="${display}">`;
 
   const btn = document.createElement('button');
   btn.className = 'dice-btn';
@@ -474,13 +477,15 @@ function attributeRow(i, attr) {
 /* =========================
    TEAM ROW
    ========================= */
-function teamRow(i, pos) {
+function teamRow(i, pos, participant) {
   const row = document.createElement('div');
   row.className = 'attr-row';
 
+  const selected = participant?.team?.[pos];
+  const display = selected ? `${selected.Name}` : '';
   row.innerHTML = `
     <div class="attr-label">${pos}</div>
-    <div class="attr-value"><input readonly placeholder="Empty"></div>
+    <div class="attr-value"><input readonly placeholder="Empty" value="${display}"></div>
     <button class="dice-btn">Pick</button>
   `;
 
