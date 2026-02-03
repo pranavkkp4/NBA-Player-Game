@@ -533,7 +533,9 @@ function openTeamModal() {
   const modal = document.getElementById("modalOverlay");
   const body = document.getElementById("modalBody");
   const title = document.getElementById("modalTitle");
+  const legend = document.getElementById("modalLegend");
   title.textContent = "Select a Team";
+  if (legend) legend.style.display = "none";
 
   body.innerHTML = "";
 
@@ -575,7 +577,9 @@ function openFutureModal(attrKey) {
   const modal = document.getElementById("modalOverlay");
   const body = document.getElementById("modalBody");
   const title = document.getElementById("modalTitle");
+  const legend = document.getElementById("modalLegend");
   title.textContent = `Select a player for ${attrKey.toUpperCase()}`;
+  if (legend) legend.style.display = "";
 
   body.innerHTML = "";
 
@@ -607,6 +611,31 @@ function openFutureModal(attrKey) {
   }
 
   const tb = table.querySelector("tbody");
+
+  if (attrKey === "athleticism") {
+    const note = document.createElement("div");
+    note.className = "muted";
+    note.style.marginBottom = "8px";
+    note.innerHTML = `
+      <details open>
+        <summary><strong>ATH Equation</strong></summary>
+        <div style="margin-top:6px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.9rem;">
+          ATH = 0.45*perNorm + 0.20*fgBonus + 0.20*rebBonus + 0.10*durability + 0.05*heightBonus
+        </div>
+        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85rem; margin-top: 4px;">
+          perNorm=clamp((PER-15)/10,-1.5,1.5),
+          fgBonus=(FG%-0.45)*4,
+          rebBonus=min(REB/10,1.2),
+          durability=min(G/1200,1.0),
+          heightBonus=(Height-78)/12
+        </div>
+        <div style="margin-top:6px;">
+          In plain English: it blends efficiency, shooting, rebounding, durability, and height into one athleticism score.
+        </div>
+      </details>
+    `;
+    body.appendChild(note);
+  }
 
   pool.forEach(p => {
     const posGroup = getPositionGroup(p.Position);
