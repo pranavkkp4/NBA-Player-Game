@@ -694,7 +694,7 @@ function openStatsHelpModal() {
         Career length is based on the Longevity pick (games played), and the career arc starts
         below those averages, peaks above them, and declines later.
       </p>
-      <h3>Career Arc (Plain English)</h3>
+      <h3>Career Arc</h3>
       <p class="muted">
         Early years are below your selected averages, mid-career reaches a peak, and later
         years taper off. Players with higher longevity (more career games) peak later and
@@ -709,8 +709,14 @@ rebBonus = min(REB / 10, 1.2)
 durability = min(G / 1200, 1.0)
 heightBonus = (Height - 78) / 12</pre>
       <p class="muted">
-        In plain English: ATH blends efficiency, shooting, rebounding, durability, and height into one score.
+        Thus, ATH blends efficiency, shooting, rebounding, durability, and height into one score.
       </p>
+      <h3>Career Average Score</h3>
+      <p class="muted">
+        careerAvgScore is a weighted career-average performance metric based on your season stats:
+      </p>
+      <pre class="sim-output" style="margin-top:6px; white-space:pre-wrap;">score = PTS*0.55 + REB*0.30 + AST*0.25 + PER*0.15
+careerAvgScore = sum(score * games) / totalGames</pre>
       <h3>Hall of Fame</h3>
       <p class="muted">
         HOF is awarded only with elite, sustained output. The sim checks MVPs, All-Pro counts,
