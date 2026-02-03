@@ -541,13 +541,22 @@ function openModal(participantIndex, key, isTeam = false) {
       <td class="${statClass(p.TRB, 'TRB', posGroup, context)}">${fmt(p.TRB, 1)}</td>
       <td class="${statClass(p.PER, 'PER', posGroup, context)}">${fmt(p.PER, 1)}</td>
       <td class="${statClass(p['FG%'], 'FG%', posGroup, context)}">${fmt(p['FG%'], 1)}</td>
-      <td><button class="dice-btn">Select</button></td>
+      <td><button type="button" class="dice-btn">Select</button></td>
     `;
 
-    tr.querySelector('button').onclick = () => {
+    const selectHandler = () => {
       selectPlayer(participantIndex, key, p, isTeam);
       modal.classList.add('hidden');
     };
+    const btn = tr.querySelector('button');
+    if (btn) {
+      btn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        selectHandler();
+      };
+    }
+    tr.onclick = selectHandler;
 
     tb.appendChild(tr);
   });
@@ -612,7 +621,8 @@ function selectPlayer(i, key, p, isTeam) {
 
     participants[i].attributes[key] = {
       value: val,
-      source: p.Name
+      source: p.Name,
+      player: p
     };
   }
 
@@ -623,23 +633,261 @@ function selectPlayer(i, key, p, isTeam) {
    SIMULATION
    ========================= */
 function runDeterministicSim() {
-  let result = '';
-
-  participants.forEach(p => {
-    let score = 0;
-
-    if (gameMode === 'attribute') {
-      for (const a of Object.values(p.attributes)) {
-        score += a.value || 0;
-      }
-    } else {
-      for (const pl of Object.values(p.team)) {
-        score += (Number(pl.PTS) || 0) + (Number(pl.AST) || 0) + (Number(pl.TRB) || 0);
-      }
-    }
-
-    result += `${p.name}: ${score.toFixed(1)}\n`;
-  });
-
+  const detail = document.getElementById('simDetail')?.value || 'full';
+  const useDetail = gameMode === 'attribute' ? 'full' : detail;
+  const result = simulateMatchup(useDetail);
   document.getElementById('simulationResult').textContent = result;
+}
+
+function buildPlayerFromAttributes(p) {
+  const shooting = p.attributes.shooting?.player;
+  const passing = p.attributes.passing?.player;
+  const rebounding = p.attributes.rebounding?.player;
+  const longevity = p.attributes.longevity?.player;
+
+  return {
+    name: p.name,
+    pts: Number(shooting?.PTS) || 0,
+    ast: Number(passing?.AST) || 0,
+    reb: Number(rebounding?.TRB) || 0,
+    per: Number(shooting?.PER) || Number(passing?.PER) || Number(rebounding?.PER) || 0,
+    fg: Number(shooting?.['FG%']) || 0,
+    g: Number(longevity?.G) || 0
+  };
+}
+
+function buildTeamFromDraft(p) {
+  const playersArr = Object.values(p.team).filter(Boolean);
+  const totals = playersArr.reduce((acc, pl) => {
+    acc.pts += Number(pl.PTS) || 0;
+    acc.ast += Number(pl.AST) || 0;
+    acc.reb += Number(pl.TRB) || 0;
+    acc.per += Number(pl.PER) || 0;
+    acc.fg += Number(pl['FG%']) || 0;
+    return acc;
+  }, { pts: 0, ast: 0, reb: 0, per: 0, fg: 0 });
+
+  const count = playersArr.length || 1;
+  const impact = playersArr.reduce((sum, pl) => sum + playerImpact(pl), 0);
+  return {
+    name: p.name,
+    pts: totals.pts,
+    ast: totals.ast,
+    reb: totals.reb,
+    per: totals.per / count,
+    fg: totals.fg / count,
+    impact,
+    players: playersArr
+  };
+}
+
+function playerImpact(pl) {
+  const pos = String(pl.Position || '').toUpperCase();
+  const pts = Number(pl.PTS) || 0;
+  const ast = Number(pl.AST) || 0;
+  const reb = Number(pl.TRB) || 0;
+  const per = Number(pl.PER) || 0;
+  const hgt = Number(pl.Height) || 0;
+
+  if (pos.includes('PG')) return ast * 1.6 + pts * 0.6 + per * 0.3;
+  if (pos.includes('SG')) return pts * 1.6 + ast * 0.5 + per * 0.3;
+  if (pos.includes('SF') || pos.includes('PF')) return per * 1.6 + pts * 0.6 + reb * 0.4;
+  if (pos.includes('C')) return reb * 1.4 + hgt * 0.2 + per * 0.4;
+  return pts * 1.0 + ast * 0.4 + reb * 0.4 + per * 0.3;
+}
+
+function seedFromNames(a, b) {
+  const str = `${a}::${b}`;
+  let hash = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function rngFromSeed(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s ^= s << 13;
+    s ^= s >>> 17;
+    s ^= s << 5;
+    return (s >>> 0) / 4294967296;
+  };
+}
+
+function scoreFromStats(s, isTeam) {
+  const pace = isTeam ? 110 : 100;
+  const base = s.pts * 1.0 + s.ast * 0.4 + s.reb * 0.25 + s.per * 0.3 + s.fg * 0.2;
+  const impactBoost = isTeam ? (s.impact || 0) * 0.35 : 0;
+  const raw = base + impactBoost;
+  return Math.max(60, Math.min(140, (raw / (isTeam ? 2.5 : 1.6)) + pace));
+}
+
+function simulateGameStory(a, b, detail, isTeam) {
+  const seed = seedFromNames(a.name, b.name);
+  const rng = rngFromSeed(seed);
+  const baseA = scoreFromStats(a, isTeam);
+  const baseB = scoreFromStats(b, isTeam);
+  const variance = () => (rng() - 0.5) * 8;
+  const scoreA = Math.round(baseA + variance());
+  const scoreB = Math.round(baseB + variance());
+
+  const lines = [];
+  const leader = scoreA >= scoreB ? a : b;
+  const trailer = scoreA >= scoreB ? b : a;
+
+  const factors = isTeam ? buildTeamFactors(a, b) : buildPlayerFactors(a, b);
+
+  if (detail === 'light') {
+    lines.push(`Tipoff: ${a.name} vs ${b.name}`);
+    lines.push(`${leader.name} starts strong and builds an early edge.`);
+    lines.push(`Halftime: ${leader.name} leads.`);
+    lines.push(`${trailer.name} makes a third-quarter push.`);
+    lines.push(`Keys for ${leader.name}: ${factors.leader.join(', ')}`);
+    lines.push(`Final: ${a.name} ${scoreA} - ${b.name} ${scoreB}`);
+  } else if (detail === 'medium') {
+    lines.push(`Tipoff: ${a.name} vs ${b.name}`);
+    lines.push(`Q1: ${leader.name} takes the first lead.`);
+    lines.push(`Q2: ${trailer.name} keeps it close before halftime.`);
+    lines.push(`Halftime: ${leader.name} ahead.`);
+    lines.push(`Q3: Momentum swings back and forth.`);
+    lines.push(`Q4: ${leader.name} closes it out.`);
+    lines.push(`Keys for ${leader.name}: ${factors.leader.join(', ')}`);
+    lines.push(`Struggles for ${trailer.name}: ${factors.trailer.join(', ')}`);
+    lines.push(`Final: ${a.name} ${scoreA} - ${b.name} ${scoreB}`);
+  } else {
+    lines.push(`Tipoff: ${a.name} vs ${b.name}`);
+    lines.push(`${leader.name} jumps out early behind efficient scoring.`);
+    lines.push(`${trailer.name} answers with a run to tighten it up.`);
+    lines.push(`Halftime: ${leader.name} leads by a small margin.`);
+    lines.push(`${trailer.name} pushes the pace in the third quarter.`);
+    lines.push(`${leader.name} steadies with rebounding and ball movement.`);
+    lines.push(`Final possessions: ${leader.name} seals the game.`);
+    lines.push(`Keys for ${leader.name}: ${factors.leader.join(', ')}`);
+    lines.push(`Struggles for ${trailer.name}: ${factors.trailer.join(', ')}`);
+    lines.push(`Final: ${a.name} ${scoreA} - ${b.name} ${scoreB}`);
+  }
+
+  return { scoreA, scoreB, lines };
+}
+
+function topDiffs(a, b) {
+  return [
+    { label: 'Scoring', diff: (a.pts || 0) - (b.pts || 0) },
+    { label: 'Playmaking', diff: (a.ast || 0) - (b.ast || 0) },
+    { label: 'Rebounding', diff: (a.reb || 0) - (b.reb || 0) },
+    { label: 'Efficiency', diff: (a.per || 0) - (b.per || 0) },
+    { label: 'Shooting', diff: (a.fg || 0) - (b.fg || 0) }
+  ].sort((x, y) => Math.abs(y.diff) - Math.abs(x.diff));
+}
+
+function teamRoleMetrics(team) {
+  const players = team.players || [];
+  const metrics = {
+    pgPlaymaking: 0,
+    sgScoring: 0,
+    wingEfficiency: 0,
+    centerBoards: 0
+  };
+  players.forEach(pl => {
+    const pos = String(pl.Position || '').toUpperCase();
+    if (pos.includes('PG')) metrics.pgPlaymaking += Number(pl.AST) || 0;
+    if (pos.includes('SG')) metrics.sgScoring += Number(pl.PTS) || 0;
+    if (pos.includes('SF') || pos.includes('PF')) metrics.wingEfficiency += Number(pl.PER) || 0;
+    if (pos.includes('C')) metrics.centerBoards += (Number(pl.TRB) || 0) + (Number(pl.Height) || 0) * 0.1;
+  });
+  return metrics;
+}
+
+function buildTeamFactors(a, b) {
+  const diffs = topDiffs(a, b).slice(0, 2).map(d => ({
+    label: `${d.label} edge`,
+    score: Math.abs(d.diff)
+  }));
+
+  const aRoles = teamRoleMetrics(a);
+  const bRoles = teamRoleMetrics(b);
+  const roleDiffs = [
+    { label: 'PG playmaking edge', score: Math.abs(aRoles.pgPlaymaking - bRoles.pgPlaymaking) },
+    { label: 'SG scoring edge', score: Math.abs(aRoles.sgScoring - bRoles.sgScoring) },
+    { label: 'Wing efficiency edge', score: Math.abs(aRoles.wingEfficiency - bRoles.wingEfficiency) },
+    { label: 'Center rebounding edge', score: Math.abs(aRoles.centerBoards - bRoles.centerBoards) }
+  ].sort((x, y) => y.score - x.score);
+
+  const combined = [...diffs, roleDiffs[0]];
+  const leader = combined.map(d => d.label).slice(0, 3);
+  const trailer = combined.map(d => d.label.replace('edge', 'gap')).slice(0, 3);
+  return { leader, trailer };
+}
+
+function buildPlayerFactors(a, b) {
+  const diffs = topDiffs(a, b).slice(0, 3);
+  const leader = diffs.map(d => `${d.label} advantage`);
+  const trailer = diffs.map(d => `${d.label} deficit`);
+  return { leader, trailer };
+}
+
+function simulateMatchup(detail) {
+  if (participants.length < 2) {
+    return 'Need at least 2 participants to simulate a matchup.';
+  }
+
+  const p1 = participants[0];
+  const p2 = participants[1];
+
+  let a;
+  let b;
+  let isTeam = false;
+  if (gameMode === 'attribute') {
+    a = buildPlayerFromAttributes(p1);
+    b = buildPlayerFromAttributes(p2);
+  } else {
+    a = buildTeamFromDraft(p1);
+    b = buildTeamFromDraft(p2);
+    isTeam = true;
+  }
+
+  const story = simulateGameStory(a, b, detail, isTeam);
+  const statLines = [];
+  if (gameMode === 'attribute') {
+    const attrOrder = ['shooting', 'passing', 'rebounding', 'longevity', 'athleticism', 'height'];
+    const labelMap = { shooting: 'Shooting', passing: 'Passing', rebounding: 'Rebounding', longevity: 'Longevity', athleticism: 'Athleticism', height: 'Height' };
+    const buildAttrLines = (p) => {
+      const lines = [`${p.name} Attribute Picks:`];
+      attrOrder.forEach(attr => {
+        const sel = p.attributes?.[attr];
+        if (!sel) return;
+        const pl = sel.player || {};
+        const pts = fmt(pl.PTS, 1);
+        const ast = fmt(pl.AST, 1);
+        const reb = fmt(pl.TRB, 1);
+        const per = fmt(pl.PER, 1);
+        const fg = fmt(pl['FG%'], 1);
+        lines.push(`- ${labelMap[attr]}: ${sel.source} | PTS ${pts} AST ${ast} REB ${reb} PER ${per} FG% ${fg}`);
+      });
+      return lines;
+    };
+    statLines.push(...buildAttrLines(p1), '', ...buildAttrLines(p2), '');
+  } else {
+    const buildTeamLines = (team) => {
+      const lines = [`${team.name} Roster:`];
+      team.players.forEach(pl => {
+        lines.push(`- ${pl.Name} | PTS ${fmt(pl.PTS, 1)} AST ${fmt(pl.AST, 1)} REB ${fmt(pl.TRB, 1)} PER ${fmt(pl.PER, 1)} FG% ${fmt(pl['FG%'], 1)}`);
+      });
+      return lines;
+    };
+    statLines.push(...buildTeamLines(a), '', ...buildTeamLines(b), '');
+  }
+  const header = isTeam
+    ? `Team Battle: ${a.name} vs ${b.name}`
+    : `Custom Players: ${a.name} vs ${b.name}`;
+
+  return [
+    header,
+    '',
+    ...statLines,
+    '',
+    ...story.lines
+  ].join('\n');
 }
