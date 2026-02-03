@@ -316,10 +316,22 @@ async function initDatabase() {
    UI Setup
    ========================= */
 const customPeak = {}; // stores selected peak attribute values
+let teamOptions = [];
+let chosenTeam = null;
 
 function renderAttributeRows() {
   const list = document.getElementById("attributeList");
   list.innerHTML = "";
+
+  const teamRow = document.createElement("div");
+  teamRow.className = "attr-row";
+  teamRow.innerHTML = `
+    <div class="attr-label">TEAM</div>
+    <div class="attr-value"><input id="future-team-value" readonly placeholder="Not chosen" /></div>
+    <button class="dice-btn">Pick</button>
+  `;
+  teamRow.querySelector("button").onclick = () => openTeamModal();
+  list.appendChild(teamRow);
 
   activeAttributes.forEach(attr => {
     const row = document.createElement("div");
@@ -341,6 +353,71 @@ function renderAttributeRows() {
     row.append(label, val, btn);
     list.appendChild(row);
   });
+}
+
+function generateTeamOptions() {
+  const era = document.getElementById("futureEra").value;
+  const pool = pickTeamsForEra(era).slice();
+  const picked = [];
+  while (pool.length && picked.length < 5) {
+    const idx = Math.floor(Math.random() * pool.length);
+    picked.push(pool.splice(idx, 1)[0]);
+  }
+  teamOptions = picked;
+  chosenTeam = null;
+}
+
+function resetPlayerBuilder() {
+  const nameInput = document.getElementById("playerName");
+  nameInput.value = "";
+  document.getElementById("futureResults").textContent = "";
+  Object.keys(customPeak).forEach(k => delete customPeak[k]);
+  renderAttributeRows();
+  teamOptions = [];
+  chosenTeam = null;
+  const teamInput = document.getElementById("future-team-value");
+  if (teamInput) teamInput.value = "";
+}
+
+function openTeamModal() {
+  if (!playersLoaded) return alert("Dataset is still loading.");
+
+  generateTeamOptions();
+
+  const modal = document.getElementById("modalOverlay");
+  const body = document.getElementById("modalBody");
+  const title = document.getElementById("modalTitle");
+  title.textContent = "Select a Team";
+
+  body.innerHTML = "";
+
+  const table = document.createElement("table");
+  table.className = "pick-table";
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>Team</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  `;
+
+  const tb = table.querySelector("tbody");
+  teamOptions.forEach(team => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${team}</td>`;
+    tr.onclick = () => {
+      chosenTeam = team;
+      const input = document.getElementById("future-team-value");
+      if (input) input.value = team;
+      modal.classList.add("hidden");
+    };
+    tb.appendChild(tr);
+  });
+
+  body.appendChild(table);
+  document.getElementById("modalClose").onclick = () => modal.classList.add("hidden");
+  modal.classList.remove("hidden");
 }
 
 /* =========================
@@ -434,7 +511,7 @@ function pickTeamsForEra(era) {
   ];
 }
 
-function simulateCareer(customName, customPosition, peak) {
+function simulateCareer(customName, customPosition, peak, teamOverride = null) {
   const teams = pickTeamsForEra(eraFilter).slice();
   const leagueSize = 150;
 
@@ -461,7 +538,9 @@ function simulateCareer(customName, customPosition, peak) {
   });
 
   // custom player in league
-  const customTeam = teams[Math.floor(Math.random() * teams.length)];
+  const customTeam = teamOverride && teams.includes(teamOverride)
+    ? teamOverride
+    : teams[Math.floor(Math.random() * teams.length)];
   const custom = {
     name: customName,
     team: customTeam,
@@ -660,6 +739,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     eraFilter = e.target.value;
   };
 
+  document.getElementById("clearFuture").onclick = () => {
+    resetPlayerBuilder();
+  };
+
   document.getElementById("simulateFuture").onclick = () => {
     if (!playersLoaded) return alert("Dataset still loading.");
 
@@ -686,7 +769,17 @@ document.addEventListener("DOMContentLoaded", async () => {
       height: customPeak.height ? customPeak.height.value : 0
     };
 
-    const output = simulateCareer(name, document.getElementById("playerPosition").value, peak);
+    if (!chosenTeam) {
+      alert("Pick a team before simulating.");
+      return;
+    }
+
+    const output = simulateCareer(
+      name,
+      document.getElementById("playerPosition").value,
+      peak,
+      chosenTeam
+    );
     renderResults(output);
   };
 });
