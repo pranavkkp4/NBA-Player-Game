@@ -1,0 +1,692 @@
+/* =========================================================
+   FUTURE CAREER MODE - future.js
+   Deterministic / SQL-backed / era-filtered
+   ========================================================= */
+
+let SQL;
+let db;
+
+let players = [];
+let playersLoaded = false;
+let eraFilter = "all";
+let teamsByEra = {};
+
+const ATTRIBUTES = [
+  "shooting",
+  "passing",
+  "rebounding",
+  "steals",
+  "blocks",
+  "longevity",
+  "athleticism",
+  "height"
+];
+
+const ATTR_MAP = {
+  shooting: "FG%",
+  passing: "AST",
+  rebounding: "TRB",
+  steals: "STL",
+  blocks: "BLK",
+  longevity: "G",
+  height: "Height"
+};
+
+const CSV_PATHS = ["data/NBA_PLAYERS.csv", "NBA_PLAYERS.csv"];
+const JSON_PATHS = ["data/nba_players.json", "nba_players.json"];
+const NUMERIC_COLS = new Set([
+  "Debut", "Final", "Height", "Weight", "G", "PTS", "TRB", "AST",
+  "FG%", "FG3%", "FT%", "eFG%", "PER", "WS"
+]);
+const NUMERIC_JSON_COLS = new Set([
+  "Height", "Weight", "G", "PTS", "TRB", "AST", "STL", "BLK",
+  "FG%", "FG3%", "FT%", "eFG%", "PER", "WS"
+]);
+
+/* =========================
+   Athleticism (YOUR MODEL)
+   ========================= */
+function computeAthleticism({ per, fg, reb, g, height }) {
+  if (!per) return 0;
+
+  const perNorm = Math.min(Math.max((per - 15) / 10, -1.5), 1.5);
+  const fgPct = fg ? (fg > 1 ? fg / 100 : fg) : 0;
+  const fgBonus = fgPct ? (fgPct - 0.45) * 4 : 0;
+  const rebBonus = reb ? Math.min(reb / 10, 1.2) : 0;
+  const durability = g ? Math.min(g / 1200, 1.0) : 0;
+  const heightBonus = height ? (height - 78) / 12 : 0;
+
+  return (
+    0.45 * perNorm +
+    0.20 * fgBonus +
+    0.20 * rebBonus +
+    0.10 * durability +
+    0.05 * heightBonus
+  );
+}
+
+/* =========================
+   Helpers
+   ========================= */
+function clamp(x, lo, hi) {
+  return Math.max(lo, Math.min(hi, x));
+}
+
+function num(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function fmt(value, digits = 1) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "N/A";
+  return n.toFixed(digits);
+}
+
+function inEra(player) {
+  if (eraFilter === "all") return true;
+  const start = parseInt(eraFilter.slice(0, 4));
+  return player.Debut >= start && player.Debut < start + 10;
+}
+
+function randn() {
+  // rough gaussian-ish
+  return (Math.random() + Math.random() + Math.random() + Math.random() - 2) / 2;
+}
+
+/* =========================
+   CSV -> SQL Helpers
+   ========================= */
+function parseCSV(text) {
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const next = text[i + 1];
+
+    if (inQuotes) {
+      if (ch === '"' && next === '"') {
+        field += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        field += ch;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inQuotes = true;
+      continue;
+    }
+
+    if (ch === ",") {
+      row.push(field);
+      field = "";
+      continue;
+    }
+
+    if (ch === "\n") {
+      row.push(field.replace(/\r$/, ""));
+      rows.push(row);
+      row = [];
+      field = "";
+      continue;
+    }
+
+    field += ch;
+  }
+
+  if (field.length || row.length) {
+    row.push(field.replace(/\r$/, ""));
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+async function fetchCSVText() {
+  let lastErr;
+  for (const path of CSV_PATHS) {
+    try {
+      const res = await fetch(path);
+      if (!res.ok) throw new Error(`HTTP ${res.status} for ${path}`);
+      return await res.text();
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr || new Error("Failed to load CSV");
+}
+
+async function fetchJSONData() {
+  let lastErr;
+  for (const path of JSON_PATHS) {
+    try {
+      const res = await fetch(path);
+      if (!res.ok) throw new Error(`HTTP ${res.status} for ${path}`);
+      return await res.json();
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr || new Error("Failed to load JSON");
+}
+
+function buildDatabaseFromCSV(csvText) {
+  const rows = parseCSV(csvText);
+  const header = rows[0];
+  const dataRows = rows.slice(1);
+
+  const columnsSql = header.map(h => `"${h}" ${NUMERIC_COLS.has(h) ? "REAL" : "TEXT"}`).join(", ");
+  db.run(`CREATE TABLE players (${columnsSql});`);
+
+  const placeholders = header.map(() => "?").join(", ");
+  const stmt = db.prepare(`INSERT INTO players VALUES (${placeholders});`);
+
+  db.run("BEGIN TRANSACTION;");
+  dataRows.forEach(r => {
+    const values = header.map((h, idx) => {
+      const raw = r[idx] ?? "";
+      if (raw === "") return null;
+      if (NUMERIC_COLS.has(h)) return Number(raw);
+      return raw;
+    });
+    stmt.run(values);
+  });
+  db.run("COMMIT;");
+  stmt.free();
+}
+
+/* =========================
+   INIT: Database + Teams
+   ========================= */
+let availableCols = new Set();
+let activeAttributes = [];
+
+function loadAvailableCols() {
+  const res = db.exec("PRAGMA table_info(players);");
+  if (!res[0]) return;
+  res[0].values.forEach(row => {
+    const name = row[1];
+    availableCols.add(name);
+  });
+}
+
+function hasCol(col) {
+  return availableCols.has(col);
+}
+
+function ensureColumns(columns) {
+  columns.forEach(col => {
+    if (availableCols.has(col)) return;
+    const colType = NUMERIC_JSON_COLS.has(col) || NUMERIC_COLS.has(col) ? "REAL" : "TEXT";
+    db.run(`ALTER TABLE players ADD COLUMN "${col}" ${colType};`);
+    availableCols.add(col);
+  });
+}
+
+function mergeJsonIntoDatabase(jsonData) {
+  if (!Array.isArray(jsonData) || jsonData.length === 0) return;
+
+  const sample = jsonData[0];
+  const jsonCols = Object.keys(sample).filter(k => k !== "Name");
+  ensureColumns(jsonCols);
+
+  const colsToUpdate = jsonCols.filter(c => availableCols.has(c));
+  if (colsToUpdate.length === 0) return;
+
+  const setSql = colsToUpdate.map(c => `"${c}" = ?`).join(", ");
+  const stmt = db.prepare(`UPDATE players SET ${setSql} WHERE Name = ?;`);
+
+  db.run("BEGIN TRANSACTION;");
+  jsonData.forEach(row => {
+    if (!row || !row.Name) return;
+    const values = colsToUpdate.map(c => {
+      const raw = row[c];
+      if (raw === undefined || raw === null || raw === "") return null;
+      if (NUMERIC_JSON_COLS.has(c)) return Number(raw);
+      return Array.isArray(raw) ? raw.join(", ") : raw;
+    });
+    values.push(row.Name);
+    stmt.run(values);
+  });
+  db.run("COMMIT;");
+  stmt.free();
+}
+
+function computeActiveAttributes() {
+  activeAttributes = ATTRIBUTES.filter(attr => {
+    if (attr === "athleticism") return true;
+    const col = ATTR_MAP[attr];
+    return hasCol(col);
+  });
+}
+
+async function initDatabase() {
+  const statusEl = document.getElementById("futureDataStatus");
+  statusEl.textContent = "Loading database...";
+
+  SQL = await initSqlJs({
+    locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${f}`
+  });
+
+  db = new SQL.Database();
+  const csvText = await fetchCSVText();
+  buildDatabaseFromCSV(csvText);
+  loadAvailableCols();
+  try {
+    const jsonData = await fetchJSONData();
+    mergeJsonIntoDatabase(jsonData);
+  } catch {
+    // optional JSON enrichment
+  }
+  loadAvailableCols();
+  computeActiveAttributes();
+
+  const selectCols = [
+    "Name", "Debut", "Position", "Height", "G", "PTS", "TRB", "AST", "PER", "FG%"
+  ];
+  if (hasCol("STL")) selectCols.push("STL");
+  if (hasCol("BLK")) selectCols.push("BLK");
+  const selectSql = selectCols.map(c => (c === "FG%" ? `"${c}"` : c)).join(", ");
+  const res = db.exec(`SELECT ${selectSql} FROM players`);
+  players = res[0].values.map(row => {
+    const obj = {};
+    res[0].columns.forEach((c, i) => obj[c] = row[i]);
+    return obj;
+  });
+
+  // Try load real franchises mapping (optional)
+  try {
+    teamsByEra = await fetch("teams_by_era_updated.json").then(r => r.json());
+  } catch {
+    teamsByEra = {};
+  }
+
+  playersLoaded = true;
+  statusEl.textContent = `Loaded ${players.length} players from SQLite database`;
+}
+
+/* =========================
+   UI Setup
+   ========================= */
+const customPeak = {}; // stores selected peak attribute values
+
+function renderAttributeRows() {
+  const list = document.getElementById("attributeList");
+  list.innerHTML = "";
+
+  activeAttributes.forEach(attr => {
+    const row = document.createElement("div");
+    row.className = "attr-row";
+
+    const label = document.createElement("div");
+    label.className = "attr-label";
+    label.textContent = attr.toUpperCase();
+
+    const val = document.createElement("div");
+    val.className = "attr-value";
+    val.innerHTML = `<input id="future-${attr}-value" readonly placeholder="Not chosen" />`;
+
+    const btn = document.createElement("button");
+    btn.className = "dice-btn";
+    btn.textContent = "Pick";
+    btn.onclick = () => openFutureModal(attr);
+
+    row.append(label, val, btn);
+    list.appendChild(row);
+  });
+}
+
+/* =========================
+   Player Selection Modal
+   ========================= */
+function openFutureModal(attrKey) {
+  if (!playersLoaded) return alert("Dataset is still loading.");
+
+  const modal = document.getElementById("modalOverlay");
+  const body = document.getElementById("modalBody");
+  const title = document.getElementById("modalTitle");
+  title.textContent = `Select a player for ${attrKey.toUpperCase()}`;
+
+  body.innerHTML = "";
+
+  let pool = players.filter(p => inEra(p));
+  pool = pool.sort(() => 0.5 - Math.random()).slice(0, 10);
+
+  const table = document.createElement("table");
+  table.className = "pick-table";
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>Name</th><th>Pos</th><th>PTS</th><th>AST</th>
+        <th>TRB</th><th>PER</th><th>FG%</th><th>G</th><th>Hgt</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  `;
+
+  const tb = table.querySelector("tbody");
+
+  pool.forEach(p => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${p.Name}</td>
+      <td>${p.Position}</td>
+      <td>${fmt(p.PTS, 1)}</td>
+      <td>${fmt(p.AST, 1)}</td>
+      <td>${fmt(p.TRB, 1)}</td>
+      <td>${fmt(p.PER, 1)}</td>
+      <td>${fmt(p["FG%"], 1)}</td>
+      <td>${fmt(p.G, 0)}</td>
+      <td>${fmt(p.Height, 0)}</td>
+    `;
+
+    tr.onclick = () => {
+      let value;
+      if (attrKey === "athleticism") {
+        value = computeAthleticism({
+          per: p.PER,
+          fg: p["FG%"],
+          reb: p.TRB,
+          g: p.G,
+          height: p.Height
+        });
+      } else {
+        value = num(p[ATTR_MAP[attrKey]]);
+      }
+
+      customPeak[attrKey] = { value, source: p.Name };
+
+      const input = document.getElementById(`future-${attrKey}-value`);
+      input.value = `${p.Name} (${value.toFixed(2)})`;
+
+      modal.classList.add("hidden");
+    };
+
+    tb.appendChild(tr);
+  });
+
+  body.appendChild(table);
+
+  document.getElementById("modalClose").onclick = () => modal.classList.add("hidden");
+  modal.classList.remove("hidden");
+}
+
+/* =========================
+   CAREER SIMULATION
+   ========================= */
+
+function pickTeamsForEra(era) {
+  if (teamsByEra && teamsByEra[era] && teamsByEra[era].length >= 10) return teamsByEra[era];
+
+  // fallback simple list
+  return [
+    "Lakers", "Celtics", "Bulls", "Warriors", "Spurs",
+    "Heat", "Knicks", "Suns", "Mavs", "Nuggets",
+    "Raptors", "Jazz", "Sixers", "Pistons", "Hawks",
+    "Clippers", "Pacers", "Wizards", "Bucks", "Blazers"
+  ];
+}
+
+function simulateCareer(customName, customPosition, peak) {
+  const teams = pickTeamsForEra(eraFilter).slice();
+  const leagueSize = 150;
+
+  // build league players sampled from era
+  const pool = players.filter(p => inEra(p));
+  const league = pool.sort(() => 0.5 - Math.random()).slice(0, leagueSize).map(p => {
+    const ath = computeAthleticism({
+      per: p.PER, fg: p["FG%"], reb: p.TRB, g: p.G, height: p.Height
+    });
+    return {
+      name: p.Name,
+      team: teams[Math.floor(Math.random() * teams.length)],
+      base: {
+        pts: num(p.PTS),
+        ast: num(p.AST),
+        reb: num(p.TRB),
+        stl: 0,
+        blk: 0,
+        per: num(p.PER),
+        fg: num(p["FG%"]),
+        ath
+      }
+    };
+  });
+
+  // custom player in league
+  const customTeam = teams[Math.floor(Math.random() * teams.length)];
+  const custom = {
+    name: customName,
+    team: customTeam,
+    isCustom: true,
+    base: {
+      fg: peak.fg,
+      ast: peak.ast,
+      reb: peak.reb,
+      stl: peak.stl,
+      blk: peak.blk,
+      g: peak.g,
+      ath: peak.ath,
+      height: peak.height
+    }
+  };
+
+  const seasons = [];
+  let awards = { MVP: 0, ROY: 0, MIP: 0, AllPro: 0, Champs: 0, FinalsMVP: 0 };
+
+  // rookies need improvement baseline
+  let lastYearScore = null;
+
+  for (let year = 1; year <= 10; year++) {
+    const factor = 0.5 + ((year - 1) / 9) * 0.5; // 50% -> 100%
+
+    // simulate custom seasonal stats from selected peaks
+    const pts = clamp((custom.base.fg * 40 + custom.base.ath * 18 + randn() * 1.2) * factor, 4, 40);
+    const ast = clamp((custom.base.ast + custom.base.ath * 2 + randn() * 0.6) * factor, 0.5, 15);
+    const reb = clamp((custom.base.reb + (custom.base.height - 72) * 0.12 + randn() * 0.8) * factor, 0.5, 18);
+    const stl = clamp((custom.base.stl + custom.base.ath * 0.6 + randn() * 0.2) * factor, 0.1, 3.0);
+    const blk = clamp((custom.base.blk + (custom.base.height - 78) * 0.05 + randn() * 0.2) * factor, 0.0, 3.5);
+
+    // PER clamped
+    const per = clamp(12 + pts * 0.6 + ast * 0.4 + reb * 0.35 + stl * 1.4 + blk * 1.1, 8, 32);
+
+    const score = pts * 0.55 + reb * 0.30 + ast * 0.25 + per * 0.15;
+
+    const seasonPlayers = [];
+
+    // add custom to season leaderboard pool
+    seasonPlayers.push({
+      name: custom.name,
+      team: custom.team,
+      pts, ast, reb, stl, blk, per, score,
+      isCustom: true
+    });
+
+    // simulate league players around base stats with mild noise
+    league.forEach(pl => {
+      const ptsL = clamp(pl.base.pts + randn() * 2.1, 0, 35);
+      const astL = clamp(pl.base.ast + randn() * 1.1, 0, 15);
+      const rebL = clamp(pl.base.reb + randn() * 1.5, 0, 18);
+      const stlL = clamp(pl.base.stl + randn() * 0.4, 0, 3);
+      const blkL = clamp(pl.base.blk + randn() * 0.4, 0, 4);
+      const perL = clamp(pl.base.per + randn() * 2.5, 5, 32);
+
+      const scoreL = ptsL * 0.55 + rebL * 0.30 + astL * 0.25 + perL * 0.15;
+
+      seasonPlayers.push({
+        name: pl.name,
+        team: pl.team,
+        pts: ptsL, ast: astL, reb: rebL, stl: stlL, blk: blkL, per: perL, score: scoreL,
+        isCustom: false
+      });
+    });
+
+    // leaderboards (top 10)
+    const topPts = [...seasonPlayers].sort((a, b) => b.pts - a.pts).slice(0, 10);
+    const topAst = [...seasonPlayers].sort((a, b) => b.ast - a.ast).slice(0, 10);
+    const topReb = [...seasonPlayers].sort((a, b) => b.reb - a.reb).slice(0, 10);
+    const topPer = [...seasonPlayers].sort((a, b) => b.per - a.per).slice(0, 10);
+
+    // awards
+    const mvp = [...seasonPlayers].sort((a, b) => b.score - a.score)[0];
+
+    // ROY: year 1 only, custom always eligible
+    let roy = null;
+    if (year === 1) {
+      roy = [...seasonPlayers].sort((a, b) => b.score - a.score)[0];
+    }
+
+    // MIP: biggest jump in score vs last year (for custom + a sample of league)
+    let mip = null;
+    if (year > 1) {
+      const improv = seasonPlayers.map(pl => {
+        let prev = pl.isCustom ? lastYearScore : pl.score - (Math.random() * 3); // proxy
+        return { ...pl, delta: pl.score - prev };
+      }).sort((a, b) => b.delta - a.delta);
+
+      mip = improv[0];
+    }
+
+    // championships: team points proxy
+    const teamTotals = {};
+    seasonPlayers.forEach(pl => {
+      teamTotals[pl.team] = (teamTotals[pl.team] || 0) + pl.score;
+    });
+
+    const champTeam = Object.entries(teamTotals).sort((a, b) => b[1] - a[1])[0][0];
+    const champCandidates = seasonPlayers.filter(pl => pl.team === champTeam);
+    const finalsMVP = [...champCandidates].sort((a, b) => b.score - a.score)[0];
+
+    // All-Pro proxy: top 15 PER
+    const allPro = [...seasonPlayers].sort((a, b) => b.per - a.per).slice(0, 15).map(p => p.name);
+
+    // update awards for custom
+    if (mvp.name === custom.name) awards.MVP++;
+    if (roy && roy.name === custom.name) awards.ROY++;
+    if (mip && mip.name === custom.name) awards.MIP++;
+    if (finalsMVP.name === custom.name) awards.FinalsMVP++;
+    if (champTeam === custom.team) awards.Champs++;
+    if (allPro.includes(custom.name)) awards.AllPro++;
+
+    lastYearScore = score;
+
+    seasons.push({
+      year,
+      custom: { pts, ast, reb, stl, blk, per, team: custom.team },
+      leaderboards: { topPts, topAst, topReb, topPer },
+      awards: {
+        MVP: mvp,
+        ROY: roy,
+        MIP: mip,
+        Champion: champTeam,
+        FinalsMVP: finalsMVP
+      }
+    });
+  }
+
+  // Hall of Fame decision (simple):
+  // at least 5 All-Pro OR 1 MVP OR 2+ Championships + All-Pro
+  const hof = (awards.AllPro >= 5) || (awards.MVP >= 1) || (awards.Champs >= 2 && awards.AllPro >= 2);
+
+  return { seasons, awards, hof };
+}
+
+/* =========================
+   Render Results
+   ========================= */
+function renderResults(output) {
+  const box = document.getElementById("futureResults");
+  box.innerHTML = "";
+
+  let text = `=== CAREER SUMMARY ===\n`;
+  text += `MVP: ${output.awards.MVP}\n`;
+  text += `ROY: ${output.awards.ROY}\n`;
+  text += `MIP: ${output.awards.MIP}\n`;
+  text += `All-Pro (Top15 PER): ${output.awards.AllPro}\n`;
+  text += `Championships: ${output.awards.Champs}\n`;
+  text += `Finals MVP: ${output.awards.FinalsMVP}\n`;
+  text += `Hall of Fame: ${output.hof ? "YES" : "NO"}\n\n`;
+
+  output.seasons.forEach(s => {
+    text += `--- Season ${s.year} (${s.custom.team}) ---\n`;
+    text += `Custom Stats: PTS ${s.custom.pts.toFixed(1)} | AST ${s.custom.ast.toFixed(1)} | REB ${s.custom.reb.toFixed(1)} | STL ${s.custom.stl.toFixed(1)} | BLK ${s.custom.blk.toFixed(1)} | PER ${s.custom.per.toFixed(1)}\n`;
+    text += `MVP: ${s.awards.MVP.name} (${s.awards.MVP.team})\n`;
+    if (s.awards.ROY) text += `ROY: ${s.awards.ROY.name} (${s.awards.ROY.team})\n`;
+    if (s.awards.MIP) text += `MIP: ${s.awards.MIP.name} (${s.awards.MIP.team})\n`;
+    text += `Champion: ${s.awards.Champion}\n`;
+    text += `Finals MVP: ${s.awards.FinalsMVP.name} (${s.awards.FinalsMVP.team})\n\n`;
+
+    text += `Top 10 PTS:\n`;
+    s.leaderboards.topPts.forEach((p, idx) => {
+      text += `${idx + 1}. ${p.name} (${p.team}) - ${p.pts.toFixed(1)}\n`;
+    });
+
+    text += `Top 10 AST:\n`;
+    s.leaderboards.topAst.forEach((p, idx) => {
+      text += `${idx + 1}. ${p.name} (${p.team}) - ${p.ast.toFixed(1)}\n`;
+    });
+
+    text += `Top 10 REB:\n`;
+    s.leaderboards.topReb.forEach((p, idx) => {
+      text += `${idx + 1}. ${p.name} (${p.team}) - ${p.reb.toFixed(1)}\n`;
+    });
+
+    text += `Top 10 PER:\n`;
+    s.leaderboards.topPer.forEach((p, idx) => {
+      text += `${idx + 1}. ${p.name} (${p.team}) - ${p.per.toFixed(1)}\n`;
+    });
+
+    text += `\n`;
+  });
+
+  box.textContent = text;
+}
+
+/* =========================
+   Wiring UI events
+   ========================= */
+document.addEventListener("DOMContentLoaded", async () => {
+  await initDatabase();
+  renderAttributeRows();
+
+  document.getElementById("futureEra").onchange = e => {
+    eraFilter = e.target.value;
+  };
+
+  document.getElementById("simulateFuture").onclick = () => {
+    if (!playersLoaded) return alert("Dataset still loading.");
+
+    eraFilter = document.getElementById("futureEra").value;
+
+    const name = document.getElementById("playerName").value.trim() || "Custom Player";
+
+    // ensure all attributes selected
+    for (const a of activeAttributes) {
+      if (!customPeak[a]) {
+        alert(`Pick a player for ${a.toUpperCase()} first.`);
+        return;
+      }
+    }
+
+    const peak = {
+      fg: customPeak.shooting ? customPeak.shooting.value : 0,
+      ast: customPeak.passing ? customPeak.passing.value : 0,
+      reb: customPeak.rebounding ? customPeak.rebounding.value : 0,
+      stl: customPeak.steals ? customPeak.steals.value : 0,
+      blk: customPeak.blocks ? customPeak.blocks.value : 0,
+      g: customPeak.longevity ? customPeak.longevity.value : 0,
+      ath: customPeak.athleticism ? customPeak.athleticism.value : 0,
+      height: customPeak.height ? customPeak.height.value : 0
+    };
+
+    const output = simulateCareer(name, document.getElementById("playerPosition").value, peak);
+    renderResults(output);
+  };
+});

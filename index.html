@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NBA Player Game</title>
+
+  <link rel="stylesheet" href="style.css">
+
+  <!-- Load sql.js so we can use SQLite in-browser (GitHub Pages compatible) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
+</head>
+
+<body>
+  <header class="hero">
+    <h1>NBA Player Draft Game</h1>
+    <p>Build your ultimate player or team using real NBA career stats</p>
+  </header>
+
+  <main class="container">
+    <section class="controls card">
+      <div class="control-row">
+        <div class="control">
+          <label for="gameMode">Game Mode:</label>
+          <select id="gameMode">
+            <option value="attribute">Attribute Based</option>
+            <option value="team">Team (5v5 Draft)</option>
+          </select>
+        </div>
+
+        <div class="control">
+          <label for="numParticipants">Number of Participants:</label>
+          <input id="numParticipants" type="number" min="1" max="6" value="2" />
+        </div>
+
+        <div class="control">
+          <label for="era">Era:</label>
+          <select id="era">
+            <option value="all">All Time</option>
+            <option value="1980s">1980s</option>
+            <option value="1990s">1990s</option>
+            <option value="2000s">2000s</option>
+            <option value="2010s">2010s</option>
+            <option value="2020s">2020s</option>
+          </select>
+        </div>
+
+        <div class="control">
+          <button id="startGame" class="primary">Start Game</button>
+          <div id="dataStatus" class="status">Loading database...</div>
+        </div>
+      </div>
+
+      <div class="toggles-row">
+        <label class="toggle">
+          <input type="checkbox" id="toggleStats" checked />
+          <span>Show Stats</span>
+        </label>
+
+        <label class="toggle">
+          <input type="checkbox" id="positionLockToggle" />
+          <span>Position-locked draft (5v5)</span>
+        </label>
+      </div>
+
+      <div class="stat-options">
+        <strong>Stats to show:</strong>
+        <label><input type="checkbox" data-stat="FG%" checked> FG%</label>
+        <label><input type="checkbox" data-stat="PTS" checked> PTS</label>
+        <label><input type="checkbox" data-stat="AST" checked> AST</label>
+        <label><input type="checkbox" data-stat="TRB" checked> TRB</label>
+        <label><input type="checkbox" data-stat="STL" checked> STL</label>
+        <label><input type="checkbox" data-stat="BLK" checked> BLK</label>
+        <label><input type="checkbox" data-stat="G" checked> G</label>
+        <label><input type="checkbox" data-stat="PER" checked> PER</label>
+        <label><input type="checkbox" data-stat="Height" checked> Height</label>
+      </div>
+    </section>
+
+    <section id="gameArea" class="game-area"></section>
+
+    <section class="card">
+      <h2>Simulate</h2>
+      <p class="muted">
+        Deterministic sim runs locally.
+      </p>
+
+      <div class="control-row">
+        <button id="simulateLocal" class="primary">Run Deterministic Sim</button>
+      </div>
+
+      <div id="simulationResult" class="sim-output"></div>
+    </section>
+
+    <section class="card">
+      <h2>Future Career Mode</h2>
+      <p class="muted">Create a player, then simulate a 10-year career.</p>
+      <a class="primary inline" href="future.html">Go to Future Career Mode -></a>
+    </section>
+  </main>
+
+  <!-- Modal -->
+  <div id="modalOverlay" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modalTitle">Select a Player</h3>
+        <button id="modalClose" class="icon-btn">X</button>
+      </div>
+      <div id="modalBody" class="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Future Career Mode</title>
+
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
+</head>
+<body>
+  <header class="hero">
+    <h1>Future Career Mode</h1>
+    <p>Create a player from real NBA attributes, then simulate a 10-year career</p>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <a class="primary inline" href="index.html"><- Back to Draft Game</a>
+      <div id="futureDataStatus" class="status">Loading database...</div>
+    </section>
+
+    <section class="card" id="futureSetup">
+      <h2>Create Your Player</h2>
+
+      <div class="control-row">
+        <div class="control">
+          <label for="playerName">Player Name</label>
+          <input id="playerName" placeholder="Enter name" />
+        </div>
+
+        <div class="control">
+          <label for="playerPosition">Position</label>
+          <select id="playerPosition">
+            <option value="PG">PG</option>
+            <option value="SG">SG</option>
+            <option value="SF">SF</option>
+            <option value="PF">PF</option>
+            <option value="C">C</option>
+          </select>
+        </div>
+
+        <div class="control">
+          <label for="futureEra">Era</label>
+          <select id="futureEra">
+            <option value="all">All Time</option>
+            <option value="1980s">1980s</option>
+            <option value="1990s">1990s</option>
+            <option value="2000s">2000s</option>
+            <option value="2010s">2010s</option>
+            <option value="2020s">2020s</option>
+          </select>
+        </div>
+
+        <div class="control">
+          <button id="simulateFuture" class="primary">Simulate 10-Year Career</button>
+        </div>
+      </div>
+
+      <div class="rows" id="attributeList"></div>
+    </section>
+
+    <section class="card">
+      <h2>Results</h2>
+      <div id="futureResults" class="sim-output"></div>
+    </section>
+
+    <!-- Modal -->
+    <div id="modalOverlay" class="modal-overlay hidden">
+      <div class="modal">
+        <div class="modal-header">
+          <h3 id="modalTitle">Select a Player</h3>
+          <button id="modalClose" class="icon-btn">X</button>
+        </div>
+        <div id="modalBody" class="modal-body"></div>
+      </div>
+    </div>
+  </main>
+
+  <script src="future.js"></script>
+</body>
+</html>
