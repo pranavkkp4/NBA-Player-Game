@@ -1,10 +1,10 @@
 # NBA Player Game
 
-An in-browser NBA draft and 10-year career simulator built with HTML, CSS, JavaScript, and in-browser SQLite (sql.js). The sim is rule-based, data-driven, and runs fully client-side on GitHub Pages.
+An in-browser NBA draft and career simulator built with HTML, CSS, JavaScript, and in-browser SQLite (sql.js). The sim is rule-based, data-driven, and runs fully client-side on GitHub Pages.
 
 ## Highlights
 - Draft game: build a player by attributes or draft a full 5v5 team
-- Future Career Mode: create a player from real NBA attributes and simulate 10 seasons
+- Future Career Mode: create a player from real NBA attributes and simulate a full career
 - SQL-first: data is loaded into an in-memory SQLite database and queried locally
 - Era filtering and position-aware comparisons for more realistic selection
 - Color-coded stat tables to compare players at a glance
@@ -17,7 +17,7 @@ An in-browser NBA draft and 10-year career simulator built with HTML, CSS, JavaS
 - GitHub Pages hosting (static site)
 
 ## How the Simulation Works (Technical Detail)
-The 10-year career sim is a deterministic, rule-based system designed to feel realistic without using ML:
+The career sim is a deterministic, rule-based system designed to feel realistic without using ML:
 
 1. Attribute-driven baselines
 Each selected player defines a career-average baseline for a specific stat.

@@ -324,12 +324,12 @@ function positionMultipliers(pos) {
   return { pts: 1.0, ast: 0.95, reb: 1.05, stl: 0.95, blk: 1.0 };
 }
 
-function careerFactorByYear(yearIndex, longevityG) {
+function careerFactorByYear(yearIndex, longevityG, totalYears) {
   const g = Number(longevityG);
   const gNorm = clamp01((g - 300) / 1200); // 0..1
   const peakStart = Math.round(2 + gNorm * 2); // 2..4
   const peakLength = Math.round(1 + gNorm * 3); // 1..4
-  const peakEnd = Math.min(10, peakStart + peakLength - 1);
+  const peakEnd = Math.min(totalYears, peakStart + peakLength - 1);
 
   const startFloor = 0.75 + gNorm * 0.08; // 0.75..0.83
   const peakCeil = 1.08 + gNorm * 0.12; // 1.08..1.20
@@ -343,7 +343,7 @@ function careerFactorByYear(yearIndex, longevityG) {
     const t = (yearIndex - peakStart) / Math.max(1, peakEnd - peakStart);
     return 1.0 + t * (peakCeil - 1.0);
   }
-  const t = (yearIndex - peakEnd) / Math.max(1, 10 - peakEnd);
+  const t = (yearIndex - peakEnd) / Math.max(1, totalYears - peakEnd);
   return peakCeil - t * (peakCeil - declineFloor);
 }
 
@@ -691,8 +691,8 @@ function openStatsHelpModal() {
     <div class="card" style="box-shadow:none; margin:0;">
       <p class="muted">
         This sim builds a custom player by borrowing each stat from the players you picked.
-        It then runs a 10-year career arc that starts below those averages, peaks above them,
-        and declines later in the career.
+        Career length is based on the Longevity pick (games played), and the career arc starts
+        below those averages, peaks above them, and declines later.
       </p>
       <h3>Career Arc (Plain English)</h3>
       <p class="muted">
@@ -747,6 +747,13 @@ function pickTeamsForEra(era) {
 function simulateCareer(customName, customPosition, peak, teamOverride = null) {
   const teams = pickTeamsForEra(eraFilter).slice();
   const leagueSize = 150;
+  const totalGames = Math.max(0, Math.round(num(peak.g)));
+  const totalYears = clamp(Math.round(totalGames / 82) || 1, 1, 20);
+  const baseGames = Math.floor(totalGames / totalYears);
+  const remainderGames = totalGames - baseGames * totalYears;
+  const gamesBySeason = Array.from({ length: totalYears }, (_, i) =>
+    baseGames + (i < remainderGames ? 1 : 0)
+  );
 
   // build league players sampled from era
   const pool = players.filter(p => inEra(p));
@@ -797,10 +804,11 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
   // rookies need improvement baseline
   let lastYearScore = null;
 
-  for (let year = 1; year <= 10; year++) {
-    const curve = careerFactorByYear(year, custom.base.g);
+  for (let year = 1; year <= totalYears; year++) {
+    const curve = careerFactorByYear(year, custom.base.g, totalYears);
     const yearVariance = clamp(0.95 + randn() * 0.06, 0.85, 1.1);
     const factor = curve * yearVariance;
+    const games = gamesBySeason[year - 1] || 0;
 
     // simulate custom seasonal stats around selected career averages + curve
     const pts = clamp((custom.base.pts + randn() * 1.8) * factor, 0, 45);
@@ -904,7 +912,13 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
 
     seasons.push({
       year,
-      custom: { name: custom.name, pts, ast, reb, stl, blk, per, team: custom.team, wins: teamWins[custom.team] || 0 },
+      custom: {
+        name: custom.name,
+        pts, ast, reb, stl, blk, per,
+        team: custom.team,
+        wins: teamWins[custom.team] || 0,
+        games
+      },
       leaderboards: { topPts, topAst, topReb, topPer },
       awards: {
         MVP: mvp,
@@ -919,15 +933,18 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
   // Hall of Fame decision (simple):
   // at least 5 All-Pro OR 1 MVP OR 2+ Championships + All-Pro
   // HOF requires elite league-level performance
-  const careerScores = seasons.map(s => s.custom.pts * 0.55 + s.custom.reb * 0.30 + s.custom.ast * 0.25 + s.custom.per * 0.15);
-  const careerAvgScore = careerScores.reduce((a, b) => a + b, 0) / careerScores.length;
+  const careerScores = seasons.map(s =>
+    (s.custom.pts * 0.55 + s.custom.reb * 0.30 + s.custom.ast * 0.25 + s.custom.per * 0.15) * s.custom.games
+  );
+  const totalPlayed = seasons.reduce((a, s) => a + s.custom.games, 0) || 1;
+  const careerAvgScore = careerScores.reduce((a, b) => a + b, 0) / totalPlayed;
   const hof =
     (awards.MVP >= 1 && careerAvgScore > 20) ||
     (awards.AllPro >= 6 && careerAvgScore > 18) ||
     (awards.Champs >= 2 && awards.AllPro >= 3 && careerAvgScore > 17) ||
     (awards.MVP >= 4 && awards.AllPro >= 7);
 
-  return { seasons, awards, hof, customName: custom.name };
+  return { seasons, awards, hof, customName: custom.name, totalGames, totalYears };
 }
 
 /* =========================
@@ -945,10 +962,19 @@ function renderResults(output) {
   text += `Championships: ${output.awards.Champs}\n`;
   text += `Finals MVP: ${output.awards.FinalsMVP}\n`;
   text += `Hall of Fame: ${output.hof ? "YES" : "NO"}\n\n`;
+  const totalGames = output.seasons.reduce((a, s) => a + s.custom.games, 0) || 1;
+  const avgPts = output.seasons.reduce((a, s) => a + s.custom.pts * s.custom.games, 0) / totalGames;
+  const avgAst = output.seasons.reduce((a, s) => a + s.custom.ast * s.custom.games, 0) / totalGames;
+  const avgReb = output.seasons.reduce((a, s) => a + s.custom.reb * s.custom.games, 0) / totalGames;
+  const avgStl = output.seasons.reduce((a, s) => a + s.custom.stl * s.custom.games, 0) / totalGames;
+  const avgBlk = output.seasons.reduce((a, s) => a + s.custom.blk * s.custom.games, 0) / totalGames;
+  const avgPer = output.seasons.reduce((a, s) => a + s.custom.per * s.custom.games, 0) / totalGames;
+  text += `Career Length: ${output.totalYears} seasons, ${output.totalGames} games\n`;
+  text += `Career Averages (Years ${output.totalYears}): PTS ${avgPts.toFixed(1)} | AST ${avgAst.toFixed(1)} | REB ${avgReb.toFixed(1)} | STL ${avgStl.toFixed(1)} | BLK ${avgBlk.toFixed(1)} | PER ${avgPer.toFixed(1)}\n\n`;
 
   output.seasons.forEach(s => {
     text += `--- Season ${s.year} (${s.custom.team}) ---\n`;
-    text += `${s.custom.name} Stats: PTS ${s.custom.pts.toFixed(1)} | AST ${s.custom.ast.toFixed(1)} | REB ${s.custom.reb.toFixed(1)} | STL ${s.custom.stl.toFixed(1)} | BLK ${s.custom.blk.toFixed(1)} | PER ${s.custom.per.toFixed(1)}\n`;
+    text += `${s.custom.name} Stats: PTS ${s.custom.pts.toFixed(1)} | AST ${s.custom.ast.toFixed(1)} | REB ${s.custom.reb.toFixed(1)} | STL ${s.custom.stl.toFixed(1)} | BLK ${s.custom.blk.toFixed(1)} | PER ${s.custom.per.toFixed(1)} | GP ${s.custom.games}\n`;
     text += `Team Wins: ${s.custom.wins}\n`;
     text += `MVP: ${s.awards.MVP.name} (${s.awards.MVP.team})\n`;
     if (s.awards.ROY) text += `ROY: ${s.awards.ROY.name} (${s.awards.ROY.team})\n`;
