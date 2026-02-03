@@ -420,6 +420,8 @@ function renderGame() {
       <h3>Participant ${i + 1}</h3>
       <label>Name</label>
       <input value="${p.name}" onchange="participants[${i}].name=this.value">
+      <label>Team Name</label>
+      <input value="${p.teamName || ''}" onchange="participants[${i}].teamName=this.value" placeholder="Required for 5v5">
       <label>Position</label>
       <select onchange="participants[${i}].position=this.value">
         <option ${p.position === 'PG' ? 'selected' : ''}>PG</option>
@@ -635,6 +637,13 @@ function selectPlayer(i, key, p, isTeam) {
 function runDeterministicSim() {
   const detail = document.getElementById('simDetail')?.value || 'full';
   const useDetail = gameMode === 'attribute' ? 'full' : detail;
+  if (gameMode === 'team') {
+    const missing = participants.some(p => !String(p.teamName || '').trim());
+    if (missing) {
+      alert('Please enter a team name for each participant.');
+      return;
+    }
+  }
   const result = simulateMatchup(useDetail);
   document.getElementById('simulationResult').textContent = result;
 }
@@ -646,7 +655,7 @@ function buildPlayerFromAttributes(p) {
   const longevity = p.attributes.longevity?.player;
 
   return {
-    name: p.name,
+    name: p.teamName || p.name,
     pts: Number(shooting?.PTS) || 0,
     ast: Number(passing?.AST) || 0,
     reb: Number(rebounding?.TRB) || 0,
@@ -833,30 +842,67 @@ function simulateMatchup(detail) {
     return 'Need at least 2 participants to simulate a matchup.';
   }
 
-  const p1 = participants[0];
-  const p2 = participants[1];
+  const isTeam = gameMode === 'team';
+  const entrants = participants.map(p => {
+    if (gameMode === 'attribute') {
+      return { entity: buildPlayerFromAttributes(p), participant: p };
+    }
+    return { entity: buildTeamFromDraft(p), participant: p };
+  });
 
-  let a;
-  let b;
-  let isTeam = false;
-  if (gameMode === 'attribute') {
-    a = buildPlayerFromAttributes(p1);
-    b = buildPlayerFromAttributes(p2);
-  } else {
-    a = buildTeamFromDraft(p1);
-    b = buildTeamFromDraft(p2);
-    isTeam = true;
+  const lines = [];
+
+  const renderMatch = (a, b, roundLabel) => {
+    const story = simulateGameStory(a.entity, b.entity, detail, isTeam);
+    const header = isTeam
+      ? `Team Battle: ${a.entity.name} vs ${b.entity.name}`
+      : `Custom Players: ${a.entity.name} vs ${b.entity.name}`;
+    lines.push(`${roundLabel} - ${header}`, '');
+    lines.push(...buildStatLines(a, b, isTeam), '');
+    lines.push(...story.lines, '');
+    const winner = story.scoreA >= story.scoreB ? a : b;
+    return winner;
+  };
+
+  if (entrants.length === 2) {
+    renderMatch(entrants[0], entrants[1], 'Match');
+    return lines.join('\n');
   }
 
-  const story = simulateGameStory(a, b, detail, isTeam);
+  lines.push('Tournament Bracket', '');
+  let round = 1;
+  let current = entrants.slice().sort(() => 0.5 - Math.random());
+
+  while (current.length > 1) {
+    lines.push(`Round ${round}`, '');
+    let next = [];
+    if (current.length % 2 === 1) {
+      const byeIdx = Math.floor(Math.random() * current.length);
+      const bye = current.splice(byeIdx, 1)[0];
+      lines.push(`${bye.entity.name} receives a bye.`, '');
+      next.push(bye);
+    }
+    for (let i = 0; i < current.length; i += 2) {
+      const winner = renderMatch(current[i], current[i + 1], `Round ${round}`);
+      next.push(winner);
+    }
+    current = next;
+    round += 1;
+  }
+
+  lines.push(`Champion: ${current[0].entity.name}`);
+  return lines.join('\n');
+}
+
+function buildStatLines(a, b, isTeam) {
   const statLines = [];
-  if (gameMode === 'attribute') {
+  if (!isTeam) {
     const attrOrder = ['shooting', 'passing', 'rebounding', 'longevity', 'athleticism', 'height'];
     const labelMap = { shooting: 'Shooting', passing: 'Passing', rebounding: 'Rebounding', longevity: 'Longevity', athleticism: 'Athleticism', height: 'Height' };
     const buildAttrLines = (p) => {
-      const lines = [`${p.name} Attribute Picks:`];
+      const lines = [`${p.participant.name} Attribute Picks:`];
       attrOrder.forEach(attr => {
-        const sel = p.attributes?.[attr];
+        const sel = p.participant.attributes?.[attr];
         if (!sel) return;
         const pl = sel.player || {};
         const pts = fmt(pl.PTS, 1);
@@ -868,26 +914,16 @@ function simulateMatchup(detail) {
       });
       return lines;
     };
-    statLines.push(...buildAttrLines(p1), '', ...buildAttrLines(p2), '');
+    statLines.push(...buildAttrLines(a), '', ...buildAttrLines(b));
   } else {
     const buildTeamLines = (team) => {
-      const lines = [`${team.name} Roster:`];
-      team.players.forEach(pl => {
+      const lines = [`${team.entity.name} Roster:`];
+      team.entity.players.forEach(pl => {
         lines.push(`- ${pl.Name} | PTS ${fmt(pl.PTS, 1)} AST ${fmt(pl.AST, 1)} REB ${fmt(pl.TRB, 1)} PER ${fmt(pl.PER, 1)} FG% ${fmt(pl['FG%'], 1)}`);
       });
       return lines;
     };
-    statLines.push(...buildTeamLines(a), '', ...buildTeamLines(b), '');
+    statLines.push(...buildTeamLines(a), '', ...buildTeamLines(b));
   }
-  const header = isTeam
-    ? `Team Battle: ${a.name} vs ${b.name}`
-    : `Custom Players: ${a.name} vs ${b.name}`;
-
-  return [
-    header,
-    '',
-    ...statLines,
-    '',
-    ...story.lines
-  ].join('\n');
+  return statLines;
 }
