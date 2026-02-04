@@ -687,12 +687,14 @@ function buildTeamFromDraft(p) {
   const count = playersArr.length || 1;
   const impact = playersArr.reduce((sum, pl) => sum + playerImpact(pl), 0);
   return {
-    name: p.name,
+    name: p.teamName || p.name,
     pts: totals.pts,
     ast: totals.ast,
     reb: totals.reb,
     per: totals.per / count,
     fg: totals.fg / count,
+    stl: totals.stl,
+    blk: totals.blk,
     impact,
     players: playersArr
   };
@@ -733,6 +735,18 @@ function rngFromSeed(seed) {
   };
 }
 
+function pick(rng, options) {
+  return options[Math.floor(rng() * options.length)];
+}
+
+function shuffleInPlace(rng, arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
 function scoreFromStats(s, isTeam) {
   const pace = isTeam ? 110 : 100;
   const base = s.pts * 1.0 + s.ast * 0.4 + s.reb * 0.25 + s.per * 0.3 + s.fg * 0.2;
@@ -767,34 +781,87 @@ function simulateGameStory(a, b, detail, isTeam) {
   const trailer = scoreA >= scoreB ? b : a;
 
   const factors = isTeam ? buildTeamFactors(a, b) : buildPlayerFactors(a, b);
+  const leaderKeys = shuffleInPlace(rng, [...factors.leader]).slice(0, 3);
+  const trailerKeys = shuffleInPlace(rng, [...factors.trailer]).slice(0, 3);
+
+  const startLines = [
+    `${leader.name} jumps out early with crisp execution.`,
+    `${leader.name} starts strong and sets the tone.`,
+    `${leader.name} seizes the opening momentum.`,
+    `${leader.name} strikes first with efficient offense.`,
+    `${leader.name} controls the early tempo.`,
+    `${leader.name} opens with a confident run.`,
+    `${leader.name} wins the first stretch with sharp ball movement.`,
+    `${leader.name} comes out aggressive and takes the lead.`
+  ];
+  const answerLines = [
+    `${trailer.name} responds with a quick run.`,
+    `${trailer.name} answers to keep it tight.`,
+    `${trailer.name} steadies and closes the gap.`,
+    `${trailer.name} counters with a burst of energy.`,
+    `${trailer.name} rallies to trim the margin.`,
+    `${trailer.name} stays within striking distance.`,
+    `${trailer.name} finds rhythm and pulls closer.`,
+    `${trailer.name} answers with timely stops and buckets.`
+  ];
+  const halftimeLines = [
+    `Halftime: ${leader.name} leads by a small margin.`,
+    `Halftime: ${leader.name} holds a slim advantage.`,
+    `Halftime: ${leader.name} is narrowly ahead.`,
+    `Halftime: ${leader.name} takes a modest lead into the break.`,
+    `Halftime: ${leader.name} edges in front.`,
+    `Halftime: ${leader.name} carries momentum into the locker room.`,
+    `Halftime: ${leader.name} has the upper hand.`,
+    `Halftime: ${leader.name} has a slight cushion.`
+  ];
+  const thirdLines = [
+    `${trailer.name} pushes the pace in the third quarter.`,
+    `${trailer.name} makes a third-quarter surge.`,
+    `${trailer.name} tries to swing momentum after the break.`,
+    `${trailer.name} turns up the pressure in Q3.`,
+    `${trailer.name} strings together stops and runs.`,
+    `${trailer.name} makes it a game after halftime.`,
+    `${trailer.name} punches back in the third.`,
+    `${trailer.name} chips away with a strong third quarter.`
+  ];
+  const closeLines = [
+    `${leader.name} steadies late with smart possessions.`,
+    `${leader.name} closes with disciplined execution.`,
+    `${leader.name} finishes strong down the stretch.`,
+    `${leader.name} executes in crunch time.`,
+    `${leader.name} controls the final minutes.`,
+    `${leader.name} gets key stops late.`,
+    `${leader.name} puts the game away in the fourth.`,
+    `${leader.name} seals it with late composure.`
+  ];
 
   if (detail === 'light') {
     lines.push(`Tipoff: ${a.name} vs ${b.name}`);
-    lines.push(`${leader.name} starts strong and builds an early edge.`);
+    lines.push(pick(rng, startLines));
     lines.push(`Halftime: ${leader.name} leads.`);
-    lines.push(`${trailer.name} makes a third-quarter push.`);
-    lines.push(`Keys for ${leader.name}: ${factors.leader.join(', ')}`);
+    lines.push(pick(rng, thirdLines));
+    lines.push(`Keys for ${leader.name}: ${leaderKeys.join(', ')}`);
     lines.push(`Final: ${a.name} ${scoreA} - ${b.name} ${scoreB}`);
   } else if (detail === 'medium') {
     lines.push(`Tipoff: ${a.name} vs ${b.name}`);
-    lines.push(`Q1: ${leader.name} takes the first lead.`);
-    lines.push(`Q2: ${trailer.name} keeps it close before halftime.`);
-    lines.push(`Halftime: ${leader.name} ahead.`);
-    lines.push(`Q3: Momentum swings back and forth.`);
-    lines.push(`Q4: ${leader.name} closes it out.`);
-    lines.push(`Keys for ${leader.name}: ${factors.leader.join(', ')}`);
-    lines.push(`Struggles for ${trailer.name}: ${factors.trailer.join(', ')}`);
+    lines.push(pick(rng, startLines));
+    lines.push(pick(rng, answerLines));
+    lines.push(pick(rng, halftimeLines));
+    lines.push(pick(rng, thirdLines));
+    lines.push(pick(rng, closeLines));
+    lines.push(`Keys for ${leader.name}: ${leaderKeys.join(', ')}`);
+    lines.push(`Struggles for ${trailer.name}: ${trailerKeys.join(', ')}`);
     lines.push(`Final: ${a.name} ${scoreA} - ${b.name} ${scoreB}`);
   } else {
     lines.push(`Tipoff: ${a.name} vs ${b.name}`);
-    lines.push(`${leader.name} jumps out early behind efficient scoring.`);
-    lines.push(`${trailer.name} answers with a run to tighten it up.`);
-    lines.push(`Halftime: ${leader.name} leads by a small margin.`);
-    lines.push(`${trailer.name} pushes the pace in the third quarter.`);
-    lines.push(`${leader.name} steadies with rebounding and ball movement.`);
+    lines.push(pick(rng, startLines));
+    lines.push(pick(rng, answerLines));
+    lines.push(pick(rng, halftimeLines));
+    lines.push(pick(rng, thirdLines));
+    lines.push(pick(rng, closeLines));
     lines.push(`Final possessions: ${leader.name} seals the game.`);
-    lines.push(`Keys for ${leader.name}: ${factors.leader.join(', ')}`);
-    lines.push(`Struggles for ${trailer.name}: ${factors.trailer.join(', ')}`);
+    lines.push(`Keys for ${leader.name}: ${leaderKeys.join(', ')}`);
+    lines.push(`Struggles for ${trailer.name}: ${trailerKeys.join(', ')}`);
     lines.push(`Final: ${a.name} ${scoreA} - ${b.name} ${scoreB}`);
   }
 
