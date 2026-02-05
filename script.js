@@ -784,6 +784,8 @@ function simulateGameStory(a, b, detail, isTeam) {
   const leaderKeys = shuffleInPlace(rng, [...factors.leader]).slice(0, 3);
   const trailerKeys = shuffleInPlace(rng, [...factors.trailer]).slice(0, 3);
 
+  const playerMoments = isTeam ? buildPlayerMoments(rng, a, b) : [];
+
   const startLines = [
     `${leader.name} jumps out early with crisp execution.`,
     `${leader.name} starts strong and sets the tone.`,
@@ -838,16 +840,20 @@ function simulateGameStory(a, b, detail, isTeam) {
   if (detail === 'light') {
     lines.push(`Tipoff: ${a.name} vs ${b.name}`);
     lines.push(pick(rng, startLines));
+    if (playerMoments.length) lines.push(playerMoments[0]);
     lines.push(`Halftime: ${leader.name} leads.`);
     lines.push(pick(rng, thirdLines));
+    if (playerMoments.length > 1) lines.push(playerMoments[1]);
     lines.push(`Keys for ${leader.name}: ${leaderKeys.join(', ')}`);
     lines.push(`Final: ${a.name} ${scoreA} - ${b.name} ${scoreB}`);
   } else if (detail === 'medium') {
     lines.push(`Tipoff: ${a.name} vs ${b.name}`);
     lines.push(pick(rng, startLines));
+    if (playerMoments.length) lines.push(playerMoments[0]);
     lines.push(pick(rng, answerLines));
     lines.push(pick(rng, halftimeLines));
     lines.push(pick(rng, thirdLines));
+    if (playerMoments.length > 1) lines.push(playerMoments[1]);
     lines.push(pick(rng, closeLines));
     lines.push(`Keys for ${leader.name}: ${leaderKeys.join(', ')}`);
     lines.push(`Struggles for ${trailer.name}: ${trailerKeys.join(', ')}`);
@@ -855,9 +861,11 @@ function simulateGameStory(a, b, detail, isTeam) {
   } else {
     lines.push(`Tipoff: ${a.name} vs ${b.name}`);
     lines.push(pick(rng, startLines));
+    if (playerMoments.length) lines.push(playerMoments[0]);
     lines.push(pick(rng, answerLines));
     lines.push(pick(rng, halftimeLines));
     lines.push(pick(rng, thirdLines));
+    if (playerMoments.length > 1) lines.push(playerMoments[1]);
     lines.push(pick(rng, closeLines));
     lines.push(`Final possessions: ${leader.name} seals the game.`);
     lines.push(`Keys for ${leader.name}: ${leaderKeys.join(', ')}`);
@@ -866,6 +874,46 @@ function simulateGameStory(a, b, detail, isTeam) {
   }
 
   return { scoreA, scoreB, lines };
+}
+
+function buildPlayerMoments(rng, a, b) {
+  const moments = [];
+  const all = []
+    .concat((a.players || []).map(p => ({ team: a.name, p })))
+    .concat((b.players || []).map(p => ({ team: b.name, p })));
+  if (!all.length) return moments;
+
+  const actions = [
+    p => `${p.Name} hits a pull-up three.`,
+    p => `${p.Name} knocks down a corner three.`,
+    p => `${p.Name} buries a catch-and-shoot three.`,
+    p => `${p.Name} drains a midrange jumper.`,
+    p => `${p.Name} attacks the rim for two.`,
+    p => `${p.Name} finishes through contact.`,
+    p => `${p.Name} euro-steps for the bucket.`,
+    p => `${p.Name} throws down a fast-break dunk.`,
+    p => `${p.Name} rises for a poster dunk.`,
+    p => `${p.Name} threads a perfect assist.`,
+    p => `${p.Name} whips a cross-court dime.`,
+    p => `${p.Name} dishes inside for an easy finish.`,
+    p => `${p.Name} grabs a big offensive board.`,
+    p => `${p.Name} clears the glass on defense.`,
+    p => `${p.Name} tips in a miss.`,
+    p => `${p.Name} swats a shot at the rim.`,
+    p => `${p.Name} comes up with a steal.`,
+    p => `${p.Name} jumps a passing lane for a pick.`,
+    p => `${p.Name} draws a charge.`,
+    p => `${p.Name} takes over on the defensive end.`
+  ];
+
+  const pickPlayer = () => all[Math.floor(rng() * all.length)];
+  const pickAction = () => actions[Math.floor(rng() * actions.length)];
+
+  for (let i = 0; i < 3; i++) {
+    const choice = pickPlayer();
+    moments.push(`${choice.team}: ${pickAction()(choice.p)}`);
+  }
+  return moments;
 }
 
 function topDiffs(a, b) {
