@@ -165,9 +165,40 @@ function inEra(player) {
   return debut >= start && debut < start + 10;
 }
 
-function randn() {
+function hashSeed(str) {
+  let hash = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function rngFromSeed(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s ^= s << 13;
+    s ^= s >>> 17;
+    s ^= s << 5;
+    return (s >>> 0) / 4294967296;
+  };
+}
+
+function rngFromString(str) {
+  return rngFromSeed(hashSeed(str));
+}
+
+function shuffleInPlace(rng, arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function randn(rng) {
   // rough gaussian-ish
-  return (Math.random() + Math.random() + Math.random() + Math.random() - 2) / 2;
+  return (rng() + rng() + rng() + rng() - 2) / 2;
 }
 
 /* =========================
@@ -540,6 +571,22 @@ const customPeak = {}; // stores selected peak attribute values
 let teamOptions = [];
 let chosenTeam = null;
 
+function buildSeedString(extra = "") {
+  const name = document.getElementById("playerName")?.value.trim() || "";
+  const position = document.getElementById("playerPosition")?.value || "";
+  const era = document.getElementById("futureEra")?.value || eraFilter || "";
+  const team = chosenTeam || "";
+  const peaks = (activeAttributes || []).map(attr => {
+    const entry = customPeak[attr];
+    if (!entry) return `${attr}:`;
+    const value = Number(entry.value);
+    const valueStr = Number.isFinite(value) ? value.toFixed(3) : "";
+    const source = entry.source || "";
+    return `${attr}:${source}:${valueStr}`;
+  }).join("|");
+  return [name, position, era, team, peaks, extra].join("|");
+}
+
 function renderAttributeRows() {
   const list = document.getElementById("attributeList");
   list.innerHTML = "";
@@ -579,9 +626,10 @@ function renderAttributeRows() {
 function generateTeamOptions() {
   const era = document.getElementById("futureEra").value;
   const pool = pickTeamsForEra(era).slice();
+  const rng = rngFromString(buildSeedString(`teams:${era}`));
   const picked = [];
   while (pool.length && picked.length < 5) {
-    const idx = Math.floor(Math.random() * pool.length);
+    const idx = Math.floor(rng() * pool.length);
     picked.push(pool.splice(idx, 1)[0]);
   }
   teamOptions = picked;
@@ -658,9 +706,10 @@ function openFutureModal(attrKey) {
 
   body.innerHTML = "";
 
+  const rng = rngFromString(buildSeedString(`attr:${attrKey}`));
   let pool = players.filter(p => inEra(p));
   const context = buildStatContext(pool);
-  pool = pool.sort(() => 0.5 - Math.random()).slice(0, 10);
+  pool = shuffleInPlace(rng, pool.slice()).slice(0, 10);
 
   const table = document.createElement("table");
   table.className = "pick-table";
@@ -851,6 +900,8 @@ function pickTeamsForEra(era) {
 
 function simulateCareer(customName, customPosition, peak, teamOverride = null) {
   const teams = pickTeamsForEra(eraFilter).slice();
+  const seed = hashSeed(buildSeedString("simulateCareer"));
+  const rng = rngFromSeed(seed);
   const leagueSize = 150;
   const totalGames = Math.max(0, Math.round(num(peak.g)));
   const totalYears = clamp(Math.round(totalGames / 82) || 1, 1, 20);
@@ -862,13 +913,13 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
 
   // build league players sampled from era
   const pool = players.filter(p => inEra(p));
-  const league = pool.sort(() => 0.5 - Math.random()).slice(0, leagueSize).map(p => {
+  const league = shuffleInPlace(rng, pool.slice()).slice(0, leagueSize).map(p => {
     const ath = computeAthleticism({
       per: p.PER, fg: p["FG%"], reb: p.TRB, g: p.G, height: p.Height
     });
     return {
       name: p.Name,
-      team: teams[Math.floor(Math.random() * teams.length)],
+      team: teams[Math.floor(rng() * teams.length)],
       base: {
         pts: num(p.PTS),
         ast: num(p.AST),
@@ -885,7 +936,7 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
   // custom player in league
   const customTeam = teamOverride && teams.includes(teamOverride)
     ? teamOverride
-    : teams[Math.floor(Math.random() * teams.length)];
+    : teams[Math.floor(rng() * teams.length)];
   const posAdj = positionAdjustments(customPosition);
   const custom = {
     name: customName,
@@ -911,16 +962,16 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
 
   for (let year = 1; year <= totalYears; year++) {
     const curve = careerFactorByYear(year, custom.base.g, totalYears);
-    const yearVariance = clamp(0.95 + randn() * 0.06, 0.85, 1.1);
+    const yearVariance = clamp(0.95 + randn(rng) * 0.06, 0.85, 1.1);
     const factor = curve * yearVariance;
     const games = gamesBySeason[year - 1] || 0;
 
     // simulate custom seasonal stats around selected career averages + curve
-    const pts = clamp((custom.base.pts + randn() * 1.8) * factor, 0, 45);
-    const ast = clamp((custom.base.ast + randn() * 0.7) * factor, 0, 15);
-    const reb = clamp((custom.base.reb + randn() * 0.9) * factor, 0, 18);
-    const stl = clamp((custom.base.stl + randn() * 0.25) * factor, 0, 3.5);
-    const blk = clamp((custom.base.blk + randn() * 0.25) * factor, 0, 3.5);
+    const pts = clamp((custom.base.pts + randn(rng) * 1.8) * factor, 0, 45);
+    const ast = clamp((custom.base.ast + randn(rng) * 0.7) * factor, 0, 15);
+    const reb = clamp((custom.base.reb + randn(rng) * 0.9) * factor, 0, 18);
+    const stl = clamp((custom.base.stl + randn(rng) * 0.25) * factor, 0, 3.5);
+    const blk = clamp((custom.base.blk + randn(rng) * 0.25) * factor, 0, 3.5);
 
     // PER clamped
     const per = clamp(10 + pts * 0.55 + ast * 0.45 + reb * 0.35 + stl * 1.3 + blk * 1.2, 8, 32);
@@ -939,12 +990,12 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
 
     // simulate league players around base stats with mild noise
     league.forEach(pl => {
-      const ptsL = clamp(pl.base.pts + randn() * 2.0, 0, 40);
-      const astL = clamp(pl.base.ast + randn() * 1.0, 0, 15);
-      const rebL = clamp(pl.base.reb + randn() * 1.2, 0, 18);
-      const stlL = clamp(pl.base.stl + randn() * 0.35, 0, 3.5);
-      const blkL = clamp(pl.base.blk + randn() * 0.35, 0, 4);
-      const perL = clamp(pl.base.per + randn() * 2.5, 5, 32);
+      const ptsL = clamp(pl.base.pts + randn(rng) * 2.0, 0, 40);
+      const astL = clamp(pl.base.ast + randn(rng) * 1.0, 0, 15);
+      const rebL = clamp(pl.base.reb + randn(rng) * 1.2, 0, 18);
+      const stlL = clamp(pl.base.stl + randn(rng) * 0.35, 0, 3.5);
+      const blkL = clamp(pl.base.blk + randn(rng) * 0.35, 0, 4);
+      const perL = clamp(pl.base.per + randn(rng) * 2.5, 5, 32);
 
       const scoreL = ptsL * 0.55 + rebL * 0.30 + astL * 0.25 + perL * 0.15;
 
@@ -976,7 +1027,7 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
     let mip = null;
     if (year > 1) {
       const improv = seasonPlayers.map(pl => {
-        let prev = pl.isCustom ? lastYearScore : pl.score - (Math.random() * 3); // proxy
+        let prev = pl.isCustom ? lastYearScore : pl.score - (rng() * 3); // proxy
         return { ...pl, delta: pl.score - prev };
       }).sort((a, b) => b.delta - a.delta);
       mip = improv[0];
@@ -1061,6 +1112,7 @@ function simulateCareer(customName, customPosition, peak, teamOverride = null) {
     awards,
     hof,
     customName: custom.name,
+    seed,
     totalGames,
     totalYears,
     advancedMetrics: {
@@ -1132,7 +1184,8 @@ function renderResults(output) {
     text += `• Team Context: Performance relatively independent of team success.\n`;
   }
 
-  text += `\n`;
+  output.seasons.forEach((s) => {
+    text += `\n`;
     text += `--- Season ${s.year} (${s.custom.team}) ---\n`;
     text += `${s.custom.name} Stats: PTS ${s.custom.pts.toFixed(1)} | AST ${s.custom.ast.toFixed(1)} | REB ${s.custom.reb.toFixed(1)} | STL ${s.custom.stl.toFixed(1)} | BLK ${s.custom.blk.toFixed(1)} | PER ${s.custom.per.toFixed(1)} | GP ${s.custom.games}\n`;
     text += `Team Wins: ${s.custom.wins}\n`;
@@ -1257,7 +1310,7 @@ function buildCareerPayloadFromSim(output, playerName, position) {
     // Add major awards as events
     if (season.awards && season.awards.MVP && season.awards.MVP.name === playerName) {
       timeline.push({
-        date: `${2023 + idx}-04-01`,
+        date: `${2024 + idx}-04-01`,
         event: 'MVP Award',
         details: `Won the MVP award`
       });
@@ -1265,7 +1318,7 @@ function buildCareerPayloadFromSim(output, playerName, position) {
 
     if (season.awards && season.awards.ROY && season.awards.ROY.name === playerName) {
       timeline.push({
-        date: `${2023 + idx}-05-01`,
+        date: `${2024 + idx}-05-01`,
         event: 'Rookie of the Year',
         details: `Won the Rookie of the Year award`
       });
@@ -1273,7 +1326,7 @@ function buildCareerPayloadFromSim(output, playerName, position) {
 
     if (season.custom.team === season.awards.Champion) {
       timeline.push({
-        date: `${2023 + idx}-06-01`,
+        date: `${2024 + idx}-06-01`,
         event: 'Championship',
         details: `Won NBA championship with ${season.custom.team}`
       });
@@ -1305,7 +1358,7 @@ function buildCareerPayloadFromSim(output, playerName, position) {
     },
     modeContext: {
       gameMode: 'career',
-      seed: null,
+      seed: output.seed ?? null,
       note: 'All details are simulated from deterministic engine outputs.'
     }
   };

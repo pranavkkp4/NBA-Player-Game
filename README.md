@@ -1,6 +1,6 @@
 # NBA Player Game
 
-An in-browser NBA draft and career simulator built with HTML, CSS, JavaScript, and in-browser SQLite (sql.js). The sim is rule-based, data-driven, and runs fully client-side on GitHub Pages. With optional AI-powered career biographies via Gemini and Ollama.
+An in-browser NBA draft and career simulator built with HTML, CSS, JavaScript, and in-browser SQLite (sql.js). The sim is rule-based, data-driven, and runs fully client-side on GitHub Pages, with a Node/Express backend that generates AI career biographies via Gemini and Ollama.
 
 ## Highlights
 - **Draft game:** Build a player by attributes or draft a full 5v5 team
@@ -10,28 +10,45 @@ An in-browser NBA draft and career simulator built with HTML, CSS, JavaScript, a
 - **SQL-first:** Data is loaded into an in-memory SQLite database and queried locally
 - **Era filtering and position-aware** comparisons for more realistic selection
 - **Color-coded stat tables** to compare players at a glance
+- **Stat toggles** to control which columns appear in the draft modal
 - **Tournament mode** for 3+ participants with random byes
 - **Play-by-play game story** output (light/medium/full detail)
+- **Seeded Future Career Mode** for reproducible simulations
 
 ## Tech Stack
 - **Frontend:** HTML5, CSS3, Vanilla JavaScript, SQLite (sql.js)
-- **Backend (Optional):** Node.js/Express, Gemini API, Ollama (local)
-- **Hosting:** GitHub Pages (frontend), Render/Fly/self-hosted (backend)
+- **Backend:** Node.js/Express, Gemini API, Ollama (local)
+- **Backend runtime:** Node 18+ recommended; Node <18 falls back to `node-fetch`
+- **Hosting:** GitHub Pages (frontend) + Node/Express backend service
 
-## Quick Start
+## Walkthrough
 
-### Frontend Only (No AI)
+### 1) Start the backend (AI biographies)
+1. `cd backend`
+2. `npm install`
+3. Create `.env` from `.env.example` and add your keys (Gemini) and settings (Ollama)
+4. Start Ollama: `ollama serve`
+5. `npm run dev`
+
+### 2) Start the frontend
 ```bash
-# Open index.html in a browser
-# No setup needed!
+python -m http.server 8000
 ```
+Open `http://localhost:8000/index.html`.
 
-### With AI Features
-1. Navigate to `backend/` directory
-2. Follow [backend/README.md](backend/README.md) for setup
-3. Run backend: `npm run dev`
-4. Open `future.html` in browser
-5. Simulate a career, then click "Generate Detailed Career (Gemini/Ollama)"
+### 3) Draft Game
+1. Choose game mode, participants, and era
+2. Click **Pick** for each row to draft players
+3. Use the stat toggles to control the draft modal columns
+4. Click **Play New Game** to run the deterministic sim
+
+### 4) Future Career Mode + AI
+1. Open `http://localhost:8000/future.html`
+2. Enter a player name, choose a position and era
+3. Pick a team and all attributes
+4. Click **Career Sim** to generate the career
+5. Click **Generate Detailed Career (Gemini/Ollama)** to create an AI biography
+6. Use **Play** to hear text-to-speech in the biography modal
 
 ## System Architecture
 
@@ -91,34 +108,8 @@ An in-browser NBA draft and career simulator built with HTML, CSS, JavaScript, a
 
 ## Reproducibility & Deterministic Design
 
-All simulations are seeded to ensure **complete reproducibility**. Given identical player attributes and seed values, the simulation produces identical career trajectories, enabling controlled variance analysis and experimentation.
-
-**Sample Output Across Different Seeds:**
-
-| Seed | Career Length | Avg PPG | Peak PPG | Championships | HOF |
-|------|---------------|---------|----------|---|-----|
-| **42** | 15 seasons | 21.3 | 28.1 | 2 | Yes |
-| **99** | 11 seasons | 18.1 | 22.5 | 0 | No |
-| **777** | 18 seasons | 19.8 | 24.2 | 1 | No |
-
-Same player attributes, different seeds → **controlled variance** in career outcomes. This design enables:
-- Rigorous statistical analysis of sim behavior
-- Reproducible research and debugging
-- Fair tournament competitions with pseudo-random matchups
-
-**Technical Implementation:**
-```javascript
-// Seeded random number generator
-function deterministicRandom(seed) {
-  const x = Math.sin(seed) * 10000;
-  return x - Math.floor(x);
-}
-
-// All season variance uses the seed
-const seasonVariance = deterministicRandom(seed + year);
-```
-
-This ensures that every simulation run is **auditable, repeatable, and scientifically sound** — much like real research simulations.
+- **Future Career Mode:** Fully seeded and deterministic. The seed is derived from player name, position, era, chosen attribute sources/values, and selected team. The same inputs always reproduce the same career.
+- **Draft Game:** Matchup simulation and game stories are deterministic per matchup (seeded by participant names). Draft pools and tournament brackets/byes use randomized sampling.
 
 ## How the Simulation Works (Technical Detail)
 The career sim is a deterministic, rule-based system designed to feel realistic without using ML:
@@ -243,34 +234,7 @@ The deterministic sim reveals non-obvious patterns in career trajectories:
 - **Text-to-Speech:** Browser Web Speech API integration
 - **Modal UI:** Progressive enhancement with loading states and error handling
 
-## Local Run
-
-### Frontend Only
-```bash
-# Live Server (VS Code)
-# Right-click index.html → Open with Live Server
-
-# Or use python
-python -m http.server 8000
-# Then open http://localhost:8000
-```
-
-### With Backend
-```bash
-# Terminal 1: Start backend
-cd backend
-npm install
-npm run dev
-
-# Terminal 2: Start frontend (in project root)
-python -m http.server 8000
-
-# Open http://localhost:8000/future.html
-# Create & simulate a career
-# Click AI buttons to generate biographies
-```
-
-## Environment Variables (Backend Only)
+## Environment Variables
 
 See [backend/.env.example](backend/.env.example) for complete list:
 - `GEMINI_API_KEY` – From Google AI Studio
@@ -281,15 +245,5 @@ See [backend/.env.example](backend/.env.example) for complete list:
 ## Data Pipeline (Client-Side SQL)
 1. `sql.js` is loaded from a CDN.
 2. The app fetches `data/NBA_PLAYERS.csv` and builds an in-memory SQLite database.
-3. If `data/nba_players.json` (or root `nba_players.json`) is present, it merges in additional fields like steals and blocks.
+3. The app tries `data/nba_players.json` first, then falls back to `nba_players.json` to merge additional fields like steals and blocks.
 4. All game logic runs on SQL query results and cached objects.
-
-## Recruiter-Focused Technical Highlights
-- Client-side SQL pipeline with CSV ingestion and JSON enrichment
-- Rule-based simulation engine with configurable career curves
-- Position-aware stat normalization and comparative color-coding
-- Deterministic, reproducible outcomes with bounded stochasticity
-- Modular vanilla JS architecture without frameworks
-
-## Local Run
-Open `index.html` in a browser. For best results, use a static server (e.g., VS Code Live Server) so fetch requests work properly.

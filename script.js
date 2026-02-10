@@ -43,6 +43,30 @@ const NUMERIC_JSON_COLS = new Set([
 ]);
 const COLOR_STATS = ['PTS', 'AST', 'TRB', 'PER', 'FG%'];
 
+const STAT_LABELS = {
+  'FG%': 'FG%',
+  'PTS': 'PTS',
+  'AST': 'AST',
+  'TRB': 'TRB',
+  'STL': 'STL',
+  'BLK': 'BLK',
+  'G': 'G',
+  'PER': 'PER',
+  'Height': 'Hgt'
+};
+
+const STAT_DIGITS = {
+  'FG%': 1,
+  'PTS': 1,
+  'AST': 1,
+  'TRB': 1,
+  'STL': 1,
+  'BLK': 1,
+  'G': 0,
+  'PER': 1,
+  'Height': 0
+};
+
 /* =========================
    Athleticism (YOUR MODEL)
    ========================= */
@@ -283,6 +307,11 @@ function fmt(value, digits = 1) {
   return num.toFixed(digits);
 }
 
+function num(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function getPositionGroup(posArray) {
   const roles = new Set(posArray || []);
   if (roles.has('Center') && !roles.has('Guard')) return 'C';
@@ -290,13 +319,13 @@ function getPositionGroup(posArray) {
   return 'F';
 }
 
-function buildStatContext(pool) {
+function buildStatContext(pool, stats = COLOR_STATS) {
   const context = {
     top10: {},
     pos: { G: {}, F: {}, C: {} }
   };
 
-  COLOR_STATS.forEach(stat => {
+  stats.forEach(stat => {
     const values = pool.map(p => Number(p[stat])).filter(v => Number.isFinite(v));
     const sorted = [...values].sort((a, b) => b - a);
     context.top10[stat] = sorted[Math.min(9, sorted.length - 1)] ?? null;
@@ -304,7 +333,7 @@ function buildStatContext(pool) {
 
   ['G', 'F', 'C'].forEach(g => {
     const groupPlayers = pool.filter(p => getPositionGroup(p.PositionArr) === g);
-    COLOR_STATS.forEach(stat => {
+    stats.forEach(stat => {
       const vals = groupPlayers.map(p => Number(p[stat])).filter(v => Number.isFinite(v));
       if (!vals.length) {
         context.pos[g][stat] = { mean: 0, std: 1 };
@@ -333,6 +362,38 @@ function statClass(value, stat, posGroup, context) {
   if (v >= mean - 0.5 * std) return 'stat-yellow';
   if (v >= mean - 1.0 * std) return 'stat-orange';
   return 'stat-red';
+}
+
+function getAvailableStats() {
+  const inputs = document.querySelectorAll('.stat-options input[data-stat]');
+  return Array.from(inputs)
+    .map(input => input.getAttribute('data-stat'))
+    .filter(stat => hasCol(stat));
+}
+
+function getSelectedStats() {
+  const toggle = document.getElementById('toggleStats');
+  if (toggle && !toggle.checked) return [];
+  const inputs = document.querySelectorAll('.stat-options input[data-stat]');
+  return Array.from(inputs)
+    .filter(input => input.checked)
+    .map(input => input.getAttribute('data-stat'))
+    .filter(stat => hasCol(stat));
+}
+
+function formatStatValue(value, stat) {
+  const digits = STAT_DIGITS[stat];
+  return fmt(value, digits === undefined ? 1 : digits);
+}
+
+function applyStatVisibility() {
+  const selected = new Set(getSelectedStats());
+  const cells = document.querySelectorAll('#modalOverlay .pick-table [data-stat]');
+  cells.forEach(cell => {
+    const stat = cell.getAttribute('data-stat');
+    const show = selected.has(stat);
+    cell.style.display = show ? '' : 'none';
+  });
 }
 
 /* =========================
@@ -420,7 +481,11 @@ async function initDatabase() {
   }
   loadAvailableCols();
 
-  const res = db.exec(`SELECT Name, Debut, Position, Height, G, PTS, TRB, AST, PER, "FG%" FROM players`);
+  const selectCols = ['Name', 'Debut', 'Position', 'Height', 'G', 'PTS', 'TRB', 'AST', 'PER', 'FG%'];
+  if (hasCol('STL')) selectCols.push('STL');
+  if (hasCol('BLK')) selectCols.push('BLK');
+  const selectSql = selectCols.map(c => (c === 'FG%' ? `"${c}"` : c)).join(', ');
+  const res = db.exec(`SELECT ${selectSql} FROM players`);
   players = res[0].values.map(row => {
     const obj = {};
     res[0].columns.forEach((c, i) => obj[c] = row[i]);
@@ -455,6 +520,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     positionLocked = e.target.checked;
   const statsHelpBtn = document.getElementById('statsHelp');
   if (statsHelpBtn) statsHelpBtn.onclick = openStatsHelpModal;
+
+  const toggleStats = document.getElementById('toggleStats');
+  if (toggleStats) toggleStats.onchange = applyStatVisibility;
+  document.querySelectorAll('.stat-options input[data-stat]').forEach(input => {
+    input.onchange = applyStatVisibility;
+  });
 });
 
 function startGame() {
@@ -587,7 +658,8 @@ function openModal(participantIndex, key, isTeam = false) {
   body.innerHTML = '';
 
   let pool = players.filter(p => inEra(p));
-  const context = buildStatContext(pool);
+  const availableStats = getAvailableStats();
+  const context = buildStatContext(pool, availableStats);
 
   if (isTeam && positionLocked) {
     pool = pool.filter(p => positionMatchesSlot(p.PositionArr, key));
@@ -597,13 +669,13 @@ function openModal(participantIndex, key, isTeam = false) {
 
   const table = document.createElement('table');
   table.className = 'pick-table';
-
+  const headerStats = availableStats
+    .map(stat => `<th data-stat="${stat}">${STAT_LABELS[stat] || stat}</th>`)
+    .join('');
   table.innerHTML = `
     <thead>
       <tr>
-        <th>Name</th><th>Pos</th><th>PTS</th>
-        <th>AST</th><th>TRB</th><th>PER</th><th>FG%</th>
-        <th></th>
+        <th>Name</th><th>Pos</th>${headerStats}<th></th>
       </tr>
     </thead>
     <tbody></tbody>
@@ -614,14 +686,15 @@ function openModal(participantIndex, key, isTeam = false) {
   pool.forEach(p => {
     const posGroup = getPositionGroup(p.PositionArr);
     const tr = document.createElement('tr');
+    const statCells = availableStats.map(stat => {
+      const value = p[stat];
+      const cls = statClass(value, stat, posGroup, context);
+      return `<td data-stat="${stat}" class="${cls}">${formatStatValue(value, stat)}</td>`;
+    }).join('');
     tr.innerHTML = `
       <td>${p.Name}</td>
       <td>${p.Position}</td>
-      <td class="${statClass(p.PTS, 'PTS', posGroup, context)}">${fmt(p.PTS, 1)}</td>
-      <td class="${statClass(p.AST, 'AST', posGroup, context)}">${fmt(p.AST, 1)}</td>
-      <td class="${statClass(p.TRB, 'TRB', posGroup, context)}">${fmt(p.TRB, 1)}</td>
-      <td class="${statClass(p.PER, 'PER', posGroup, context)}">${fmt(p.PER, 1)}</td>
-      <td class="${statClass(p['FG%'], 'FG%', posGroup, context)}">${fmt(p['FG%'], 1)}</td>
+      ${statCells}
       <td><button type="button" class="dice-btn">Select</button></td>
     `;
 
@@ -643,6 +716,7 @@ function openModal(participantIndex, key, isTeam = false) {
   });
 
   body.appendChild(table);
+  applyStatVisibility();
   modal.classList.remove('hidden');
   document.getElementById('modalClose').onclick =
     () => modal.classList.add('hidden');
@@ -771,8 +845,10 @@ function buildTeamFromDraft(p) {
     acc.reb += Number(pl.TRB) || 0;
     acc.per += Number(pl.PER) || 0;
     acc.fg += Number(pl['FG%']) || 0;
+    acc.stl += Number(pl.STL) || 0;
+    acc.blk += Number(pl.BLK) || 0;
     return acc;
-  }, { pts: 0, ast: 0, reb: 0, per: 0, fg: 0 });
+  }, { pts: 0, ast: 0, reb: 0, per: 0, fg: 0, stl: 0, blk: 0 });
 
   const count = playersArr.length || 1;
   const impact = playersArr.reduce((sum, pl) => sum + playerImpact(pl), 0);
